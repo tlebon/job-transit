@@ -1,0 +1,29 @@
+# Data — CPS microdata can't be redistributed (IPUMS terms); O*NET and the
+# rest are large and re-downloadable. Keep small derived artefacts (a
+# transition matrix, a crosswalk) in data/derived/ and unignore them there.
+data/
+!data/derived/
+!data/derived/**
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+*.egg-info/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Node (for when the app arrives)
+node_modules/
+.next/
+dist/
+
+# Editors / OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
