@@ -1,0 +1,21 @@
+{
+  "known_occupation": {
+    "model": "ranker-lgbm.joblib",
+    "blend_with_history": true,
+    "k": 100
+  },
+  "new_profile": {
+    "model": "ranker-poisson.joblib",
+    "blend_with_history": false
+  },
+  "history_file": "history-flows-2015-2021.parquet",
+  "flow_scale_w": 2004.0675002064372,
+  "features": [
+    "log_dest_size",
+    "log_origin_size",
+    "wage_diff",
+    "zone_diff",
+    "same_major",
+    "sim_ks"
+  ]
+}
