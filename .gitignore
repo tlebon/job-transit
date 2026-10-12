@@ -2,8 +2,8 @@
 # rest are large and re-downloadable. Keep small derived artefacts (a
 # transition matrix, a crosswalk) in data/derived/ and unignore them there.
 data/
-!data/derived/
-!data/derived/**
+data/derived/
+data/derived/**
 
 # Python
 .venv/
