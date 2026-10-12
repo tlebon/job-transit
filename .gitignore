@@ -1,9 +1,8 @@
-# Data — CPS microdata can't be redistributed (IPUMS terms); O*NET and the
-# rest are large and re-downloadable. Keep small derived artefacts (a
-# transition matrix, a crosswalk) in data/derived/ and unignore them there.
-data/
-data/derived/
-data/derived/**
+# Data — data/derived is committed; everything else under data/ is not.
+# data/interim holds person-level CPS rows (IPUMS terms forbid redistributing
+# them) and large files the notebooks rebuild in seconds.
+data/*
+!data/derived/
 
 # Python
 .venv/
