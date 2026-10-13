@@ -1,0 +1,98 @@
+"""Job Transit API.  Run from the repo root:  uv run uvicorn api.app:app --reload --port 8000"""
+from typing import Literal
+
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+
+from api.cv import read_cv
+from api.engine import Engine, Profile
+
+app = FastAPI(title="Job Transit")
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+engine = Engine()
+
+
+class ProfileIn(BaseModel):
+    job: int | None = None
+    answers: dict[str, float] = Field(default_factory=dict)
+    chips: list[str] = Field(default_factory=list)
+    quiz: dict[str, float] = Field(default_factory=dict)
+    education: str | None = None
+
+
+class RecommendIn(BaseModel):
+    profile: ProfileIn
+    sort: Literal["best", "reachable", "appealing"] = "best"
+    limit: int = Field(30, ge=1, le=600)
+
+
+@app.get("/health")
+def health():
+    return {"ok": True, "occupations": len(engine.codes)}
+
+
+@app.get("/meta")
+def meta():
+    """Survey items, interest chips, quiz activities and education options for the UI."""
+    m = engine.meta
+    return {k: m[k] for k in ["items", "chips", "quiz", "education_ladder", "families", "riasec_order"]}
+
+
+@app.get("/map")
+def city_map():
+    """Job City: every occupation's map position, the districts and the busiest real moves (transit lines)."""
+    return engine.city
+
+
+@app.get("/jobs/search")
+def search_jobs(q: str, limit: int = 8):
+    return engine.search_jobs(q, limit)
+
+
+@app.get("/occupations/{code}")
+def occupation(code: int):
+    if code not in engine.position:
+        raise HTTPException(404, "Unknown occupation code")
+    return engine.occupation(code)
+
+
+@app.post("/recommend")
+def recommend(body: RecommendIn):
+    if body.profile.job is not None and body.profile.job not in engine.position:
+        raise HTTPException(400, "Unknown occupation code for job")
+    return engine.recommend(Profile(**body.profile.model_dump()), sort=body.sort, limit=body.limit)
+
+
+class CvIn(BaseModel):
+    text: str | None = None
+    pdf_base64: str | None = None
+
+
+@app.post("/cv")
+def cv(body: CvIn):
+    """Read a CV (PDF or text) and return planner inputs the person can review before applying."""
+    try:
+        record = read_cv(engine.meta["items"], engine.meta["education_ladder"], body.text, body.pdf_base64)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except RuntimeError as e:
+        raise HTTPException(503, str(e))
+
+    job_matches = []
+    for job in record.get("jobs", [])[:3]:
+        top = engine.search_jobs(job["title"], limit=3)
+        job_matches.append({"title": job["title"], "years": job.get("years"), "matches": top})
+
+    known_items = set(engine.item_order)
+    answers = {k: float(v) for k, v in (record.get("skill_ratings") or {}).items() if k in known_items}
+    education = record.get("education")
+    return {
+        "summary": record.get("summary", ""),
+        "jobs": job_matches,
+        "education": education if education in engine.meta["education_ladder"] else None,
+        "education_field": record.get("education_field") or None,
+        "years_experience": record.get("years_experience"),
+        "tools": record.get("tools", []),
+        "answers": answers,
+    }
