@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { CityMap as CityMapData, Occupation, Recommendation, SortKey, Stop } from "@/lib/api";
+import type { CityMap as CityMapData, Occupation, Profile, Recommendation, SortKey, Stop } from "@/lib/api";
 import { CityMap } from "./CityMap";
-import { RouteCard } from "./RouteCard";
+import { OriginCard } from "./OriginCard";
 import { StopList } from "./StopList";
+import { StopPage } from "./StopPage";
 
 export type Trip = { start: Occupation; legs: Occupation[] };
 
@@ -16,13 +17,14 @@ type Props = {
   error: string | null;
   trip: Trip | null;
   schooling: number | null;
+  request: Profile;
   onContinue: (stop: Stop) => void;
   onBack: () => void;
 };
 
 const PIN_COUNT = 10;
 
-export function Board({ city, data, sort, onSort, error, trip, schooling, onContinue, onBack }: Props) {
+export function Board({ city, data, sort, onSort, error, trip, schooling, request, onContinue, onBack }: Props) {
   const [selected, setSelected] = useState<number | null>(null);
   const [hovered, setHovered] = useState<number | null>(null);
 
@@ -35,9 +37,10 @@ export function Board({ city, data, sort, onSort, error, trip, schooling, onCont
     [start, trip],
   );
 
+  const currentCode = trip ? trip.legs[trip.legs.length - 1].census : origin?.census ?? null;
   useEffect(() => {
-    if (selected !== null && !stops.has(selected)) setSelected(null);
-  }, [stops, selected]);
+    if (selected !== null && selected !== currentCode && !stops.has(selected)) setSelected(null);
+  }, [stops, selected, currentCode]);
 
   const selectedStop = selected !== null ? stops.get(selected) : undefined;
   const baseSchooling = schooling ?? yearsFor(start?.entry_education) ?? 4;
@@ -77,14 +80,17 @@ export function Board({ city, data, sort, onSort, error, trip, schooling, onCont
           <details className="evidence">
             <summary>Why we placed you here</summary>
             <ul>
-              {data.evidence.slice(0, 5).map((e) => (
-                <li key={e.statement}>
-                  “{e.statement}” matches “{e.task}” ({e.occupation})
+              {data.evidence.map((e, i) => (
+                <li key={i}>
+                  <strong>{e.placed_as}</strong>: “{e.statement}” is like “{e.task}”
                 </li>
               ))}
             </ul>
             {data.tools_matched.length > 0 && <p>Tools recognised: {data.tools_matched.join(", ")}.</p>}
           </details>
+        )}
+        {data && data.hobby_areas.length > 0 && (
+          <p className="near-note">From your hobbies we picked up: {data.hobby_areas.join(", ")}.</p>
         )}
         {!trip && origin?.kind === "nearest station" && (
           <p className="near-note">
@@ -101,7 +107,7 @@ export function Board({ city, data, sort, onSort, error, trip, schooling, onCont
         {error && <p className="error">Couldn’t reach the planner: {error}. Check that the API is running.</p>}
       </div>
 
-      <div className="board-body">
+      <div className={selected !== null ? "board-body board-body-wide" : "board-body"}>
         {city ? (
           <CityMap
             city={city}
@@ -112,17 +118,28 @@ export function Board({ city, data, sort, onSort, error, trip, schooling, onCont
             hovered={hovered}
             onSelect={setSelected}
             onHover={setHovered}
+            onSelectStart={() => currentCode !== null && setSelected(currentCode)}
           />
         ) : (
           <div className="city city-loading">Loading the map…</div>
         )}
         <aside className="side">
-          {selectedStop && start ? (
-            <RouteCard
+          {selected !== null && selected === currentCode && start ? (
+            <OriginCard
+              origin={trip ? trip.legs[trip.legs.length - 1] : start}
+              request={request}
+              stops={data?.results ?? []}
+              onSelect={setSelected}
+              onClose={() => setSelected(null)}
+            />
+          ) : selectedStop && start ? (
+            <StopPage
               stop={selectedStop}
+              request={request}
               start={start}
               legs={trip?.legs ?? []}
               schooling={baseSchooling}
+              hasEducation={schooling !== null}
               onClose={() => setSelected(null)}
               onContinue={() => {
                 onContinue(selectedStop);
@@ -137,8 +154,8 @@ export function Board({ city, data, sort, onSort, error, trip, schooling, onCont
         </aside>
       </div>
       <p className="footnote">
-        Nearby means similar skills. Riders: share of people leaving your stop who land there, from real US job moves
-        (CPS 2015–2021). Travel time is a rough guide from typical education and training.
+        Nearby means similar skills. Common, occasional and rare moves come from real US job changes in the Current
+        Population Survey, 2015–2021.
       </p>
     </section>
   );
@@ -177,7 +194,7 @@ function Legend() {
       <h2>Job City</h2>
       <p>Every block is an occupation. Neighbours need similar skills, and districts group jobs that draw on the same kind of knowledge.</p>
       <p>Tell us about your work and interests (Your profile, top right). Your best next stops appear as numbered pins, with routes from where you are.</p>
-      <p>Click any stop to see the route: travel time, line changes, pay and outlook. Then continue from there to plan a second step.</p>
+      <p>Click any stop to see what the job is, why it suits you, your gap and how to get there. Then continue from there to plan a second step.</p>
     </section>
   );
 }

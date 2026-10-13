@@ -24,6 +24,8 @@ export type Profile = {
   description: string | null;
   activities: string[];
   tools: string[];
+  hobbies: string | null;
+  goals: string[];
 };
 
 export type Occupation = {
@@ -41,6 +43,8 @@ export type Occupation = {
   ai_observed: number | null;
   ai_theoretical: number | null;
   ai_theoretical_pct_in_zone: number | null;
+  official_title?: string;
+  bls_ai_exposure?: "Low" | "Moderate" | "High" | "Very high" | null;
   education_level: number | null;
 };
 
@@ -49,6 +53,8 @@ export type Stop = Occupation & {
   reach_share: number | null;
   reach_pct: number | null;
   reach_score: number | null;
+  reach_rank?: number | null;
+  reach_label?: string | null;
   appeal_pct: number | null;
   same_line?: boolean;
   education_gap: number | null;
@@ -62,8 +68,9 @@ export type Recommendation = {
         mix: { census: number; title: string; weight: number }[];
       })
     | null;
-  evidence: { statement: string; task: string; occupation: string; similarity: number }[];
+  evidence: { placed_as: string; statement: string; task: string; occupation: string; similarity: number }[];
   tools_matched: string[];
+  hobby_areas: string[];
   signals: {
     job: boolean;
     skills_answered: number;
@@ -94,15 +101,40 @@ async function getJson<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+export type CvRole = {
+  title: string;
+  label: string;
+  years: number | null;
+  current: boolean;
+  kind: "job" | "program";
+  matches: JobMatch[];
+};
+
 export type CvResult = {
   summary: string;
-  jobs: { title: string; years: number | null; matches: JobMatch[] }[];
+  jobs: CvRole[];
   education: string | null;
   education_field: string | null;
   years_experience: number | null;
   tools: string[];
   activities: string[];
   answers: Record<string, number>;
+};
+
+export type SkillLine = { item: string; needed: number; you: number };
+export type StopDetails = {
+  occupation: Occupation;
+  description?: string;
+  tasks?: string[];
+  example_titles?: string[];
+  catch_all?: boolean;
+  members?: { title: string; summary: string }[];
+  reach?: { share: number; rank: number; label: string; from: string | null };
+  skill_match?: number;
+  gaps?: SkillLine[];
+  transfers?: SkillLine[];
+  pay_change_pct?: number;
+  from_occupation?: Occupation;
 };
 
 export const api = {
@@ -115,6 +147,13 @@ export const api = {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
+    }),
+  stop: (profile: Profile, census: number, signal?: AbortSignal) =>
+    getJson<StopDetails>("/stop", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ profile, census }),
+      signal,
     }),
   recommend: (profile: Profile, sort: SortKey, signal?: AbortSignal) =>
     getJson<Recommendation>("/recommend", {
@@ -135,4 +174,6 @@ export const EMPTY_PROFILE: Profile = {
   description: null,
   activities: [],
   tools: [],
+  hobbies: null,
+  goals: [],
 };

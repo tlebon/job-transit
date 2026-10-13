@@ -5,15 +5,31 @@ import { Board, type Trip } from "@/components/Board";
 import { CvReader, type CvApply } from "@/components/CvReader";
 import { JobTitles, type Title } from "@/components/JobTitles";
 import { Leg } from "@/components/Leg";
+import { GoalPicker } from "@/components/GoalPicker";
+import { Logo } from "@/components/Logo";
 import { Onboarding } from "@/components/Onboarding";
 import { Scale } from "@/components/Scale";
-import { api, EMPTY_PROFILE, type CityMap, type Meta, type Profile, type Recommendation, type SortKey } from "@/lib/api";
+import {
+  api,
+  EMPTY_PROFILE,
+  type CityMap,
+  type CvResult,
+  type Meta,
+  type Profile,
+  type Recommendation,
+  type SortKey,
+} from "@/lib/api";
 import { educationYears } from "@/lib/travel";
 
 const STORAGE_KEY = "job-transit-profile-v1";
 const ONBOARDED_KEY = "job-transit-onboarded-v1";
 
-type Saved = { profile: Profile; jobLabel: string | null; extraLabels?: Record<number, string> };
+type Saved = {
+  profile: Profile;
+  jobLabel: string | null;
+  extraLabels?: Record<number, string>;
+  cv?: CvResult | null;
+};
 
 function load(): Saved | null {
   try {
@@ -37,6 +53,7 @@ export default function Home() {
   const [profile, setProfile] = useState<Profile>(EMPTY_PROFILE);
   const [jobLabel, setJobLabel] = useState<string | null>(null);
   const [extraLabels, setExtraLabels] = useState<Record<number, string>>({});
+  const [cv, setCv] = useState<CvResult | null>(null);
   const [sort, setSort] = useState<SortKey>("best");
   const [data, setData] = useState<Recommendation | null>(null);
   const [loading, setLoading] = useState(false);
@@ -53,6 +70,7 @@ export default function Home() {
       setProfile({ ...EMPTY_PROFILE, ...saved.profile });
       setJobLabel(saved.jobLabel);
       setExtraLabels(saved.extraLabels ?? {});
+      setCv(saved.cv ?? null);
     }
     let seen = false;
     try {
@@ -66,13 +84,13 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    save({ profile, jobLabel, extraLabels });
+    save({ profile, jobLabel, extraLabels, cv });
     const controller = new AbortController();
     const timer = setTimeout(() => {
       setLoading(true);
-      const request = trip ? { ...profile, job: trip.legs[trip.legs.length - 1].census } : profile;
+      const body = trip ? { ...profile, job: trip.legs[trip.legs.length - 1].census, extra_jobs: [] } : profile;
       api
-        .recommend(request, sort, controller.signal)
+        .recommend(body, sort, controller.signal)
         .then((d) => {
           setData(d);
           setError(null);
@@ -86,7 +104,7 @@ export default function Home() {
       clearTimeout(timer);
       controller.abort();
     };
-  }, [profile, sort, jobLabel, trip]);
+  }, [profile, sort, jobLabel, trip, cv]);
 
   // a new starting job starts a new trip
   useEffect(() => setTrip(null), [profile.job, profile.extra_jobs]);
@@ -100,6 +118,14 @@ export default function Home() {
     return () => clearTimeout(timer);
   }, [descriptionDraft]);
   const setDescription = (text: string) => setDescriptionDraft(text);
+  const [hobbiesDraft, setHobbiesDraft] = useState<string | null>(null);
+  useEffect(() => {
+    if (hobbiesDraft === null) return;
+    const timer = setTimeout(() => update({ hobbies: hobbiesDraft.trim() || null }), 800);
+    return () => clearTimeout(timer);
+  }, [hobbiesDraft]);
+  const toggleGoal = (goal: string) =>
+    setProfile((p) => ({ ...p, goals: p.goals.includes(goal) ? p.goals.filter((g) => g !== goal) : [...p.goals, goal] }));
   const setIn = (key: "answers" | "quiz", id: string, value: number | undefined) =>
     setProfile((p) => {
       const next = { ...p[key] };
@@ -112,18 +138,23 @@ export default function Home() {
     () => (meta ? meta.items.filter((i) => i.core || showAllSkills) : []),
     [meta, showAllSkills],
   );
-  const applyCv = ({ job, education, answers, activities, tools }: CvApply) => {
+  const applyCv = ({ titles: cvTitles, education, answers, activities, tools, record }: CvApply) => {
     setProfile((p) => ({
       ...p,
-      job: job ? job.census : p.job,
       education: education ?? p.education,
       answers: { ...answers, ...p.answers },
       activities,
       tools,
     }));
-    if (job) setJobLabel(job.label);
+    if (cvTitles.length) setTitles(cvTitles);
+    setCv(record);
   };
-
+  const removeCv = () => {
+    setProfile((p) => ({ ...p, activities: [], tools: [] }));
+    setCv(null);
+  };
+  const removeActivity = (activity: string) =>
+    setProfile((p) => ({ ...p, activities: p.activities.filter((a) => a !== activity) }));
   const titles: Title[] = [
     ...(profile.job !== null && jobLabel ? [{ census: profile.job, label: jobLabel }] : []),
     ...profile.extra_jobs.map((c) => ({ census: c, label: extraLabels[c] ?? `Occupation ${c}` })),
@@ -148,19 +179,25 @@ export default function Home() {
     setProfile(EMPTY_PROFILE);
     setJobLabel(null);
     setExtraLabels({});
+    setCv(null);
+    setHobbiesDraft(null);
     setTrip(null);
     setDescriptionDraft(null);
     setDrawerOpen(false);
     setOnboarding(true);
   };
 
+  const request = useMemo(
+    () => (trip ? { ...profile, job: trip.legs[trip.legs.length - 1].census, extra_jobs: [] } : profile),
+    [profile, trip],
+  );
   const nSkills = Object.keys(profile.answers).length;
   const nQuiz = Object.keys(profile.quiz).length;
 
   return (
     <>
       <header className="topbar">
-        <span className="roundel" aria-hidden="true" />
+        <Logo />
         <span className="brand">Job Transit</span>
         <span className="tagline">Plan your next stop</span>
         <span className="topbar-actions">
@@ -183,6 +220,10 @@ export default function Home() {
           onDescription={setDescription}
           onApplyCv={applyCv}
           onToggleChip={toggleChip}
+          hobbies={hobbiesDraft ?? profile.hobbies ?? ""}
+          onHobbies={setHobbiesDraft}
+          onToggleGoal={toggleGoal}
+          hasCv={cv !== null}
           onFinish={finishOnboarding}
         />
       )}
@@ -191,12 +232,48 @@ export default function Home() {
         {drawerOpen && (
         <div className="planner">
           <Leg
-            title="Start from your CV"
-            hint="Fills in your job, education and skills. You can edit everything after."
-            status="Optional"
-            done={false}
+            title={cv ? "From your CV" : "Start from your CV"}
+            hint={cv ? "What we read from it. Remove anything that doesn’t fit." : "Fills in your roles, education and skills"}
+            status={cv ? "Added" : "Optional"}
+            done={cv !== null}
           >
-            <CvReader onApply={applyCv} />
+            {cv ? (
+              <div className="cv-summary">
+                <p>{cv.summary}</p>
+                {profile.activities.length > 0 && (
+                  <>
+                    <span className="fact-label">What you do (used to place you)</span>
+                    <ul className="activity-list">
+                      {profile.activities.map((a) => (
+                        <li key={a}>
+                          <span>{a}</span>
+                          <button type="button" className="linkish" aria-label={`Remove: ${a}`} onClick={() => removeActivity(a)}>
+                            Remove
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+                {profile.tools.length > 0 && (
+                  <>
+                    <span className="fact-label">Tools</span>
+                    <div className="chips">
+                      {profile.tools.map((t) => (
+                        <span key={t} className="chip static">
+                          {t}
+                        </span>
+                      ))}
+                    </div>
+                  </>
+                )}
+                <button type="button" className="linkish" onClick={removeCv}>
+                  Remove CV data
+                </button>
+              </div>
+            ) : (
+              <CvReader onApply={applyCv} />
+            )}
           </Leg>
 
           <Leg
@@ -221,10 +298,22 @@ export default function Home() {
 
           <Leg
             title="What interests you?"
-            hint="Topics you enjoy or would like to work with"
+            hint="Hobbies, and topics you enjoy or would like to work with"
             status={profile.chips.length ? `${profile.chips.length} picked` : "Optional"}
             done={profile.chips.length > 0}
           >
+            <label className="cv-row">
+              <span className="q-text">What do you do for fun?</span>
+              <textarea
+                className="field area"
+                rows={2}
+                placeholder="Bouldering, improv comedy, writing short stories"
+                value={hobbiesDraft ?? profile.hobbies ?? ""}
+                onChange={(e) => setHobbiesDraft(e.target.value)}
+              />
+            </label>
+            {data && data.hobby_areas.length > 0 && <p className="q-help">Picked up: {data.hobby_areas.join(", ")}</p>}
+            <span className="q-text">Or tap topics</span>
             <div className="chips">
               {meta?.chips.map((chip) => {
                 const on = profile.chips.includes(chip.name);
@@ -242,6 +331,15 @@ export default function Home() {
                 );
               })}
             </div>
+          </Leg>
+
+          <Leg
+            title="What do you want from a change?"
+            hint="Pick any. It changes the order of your stops, never what you can see."
+            status={profile.goals.length ? `${profile.goals.length} picked` : "Optional"}
+            done={profile.goals.length > 0}
+          >
+            <GoalPicker goals={profile.goals} onToggle={toggleGoal} />
           </Leg>
 
           <Leg
@@ -324,6 +422,7 @@ export default function Home() {
           error={error}
           trip={trip}
           schooling={educationYears(profile.education)}
+          request={request}
           onContinue={(stop) => {
             if (!data?.origin) return;
             setTrip((t) => (t ? { ...t, legs: [...t.legs, stop] } : { start: data.origin!, legs: [stop] }));

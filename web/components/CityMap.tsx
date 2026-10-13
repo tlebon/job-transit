@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import type { CityMap as CityMapData, Stop } from "@/lib/api";
 import { lineOf } from "@/lib/lines";
+import { MapKey } from "./MapKey";
+import { AROUND, circleBox, placeLabels, type Box, type LabelRequest } from "@/lib/labels";
 
 // Muted hues for the 14 districts, spread around the colour wheel.
 const DISTRICT_HUES = [205, 35, 150, 265, 15, 180, 95, 320, 55, 240, 125, 0, 285, 75];
@@ -23,9 +25,10 @@ type Props = {
   hovered: number | null;
   onSelect: (census: number) => void;
   onHover: (census: number | null) => void;
+  onSelectStart: () => void;
 };
 
-export function CityMap({ city, stops, pins, path, selected, hovered, onSelect, onHover }: Props) {
+export function CityMap({ city, stops, pins, path, selected, hovered, onSelect, onHover, onSelectStart }: Props) {
   const [view, setView] = useState<View>(FULL);
   const svgRef = useRef<SVGSVGElement>(null);
   const drag = useRef<{ x: number; y: number; view: View } | null>(null);
@@ -121,6 +124,65 @@ export function CityMap({ city, stops, pins, path, selected, hovered, onSelect, 
   const start = path.length ? station.get(path[0]) : undefined;
   const r = (base: number) => base * scale;
 
+  // One pass decides which labels fit: "you are here" first, then the stop you're looking at,
+  // then the top five pins, then district names. Anything that would overlap is left out.
+  const labels = useMemo(() => {
+    const obstacles: Box[] = [];
+    pins.forEach((p) => {
+      const s = station.get(p.census);
+      if (s) obstacles.push(circleBox(s.x, s.y, 15 * scale));
+    });
+    if (start) obstacles.push(circleBox(start.x, start.y, 17 * scale));
+
+    const around = AROUND;
+    const requests: LabelRequest[] = [];
+    if (start) {
+      requests.push({
+        id: "here", kind: "here", text: path.length > 1 ? "Start" : "You are here",
+        x: start.x, y: start.y, size: 15 * scale, gap: 22 * scale, charWidth: 0.62, sides: around, reaches: [1, 1.6], required: true,
+      });
+    }
+    const focus = highlight !== null ? station.get(highlight) : undefined;
+    if (focus && focus.census !== start?.census) {
+      requests.push({
+        id: `focus-${focus.census}`, kind: "pin", text: shorten(focus.title),
+        x: focus.x, y: focus.y, size: 14 * scale, gap: (pinSet.has(focus.census) ? 20 : 9) * scale,
+        charWidth: 0.58, sides: around, reaches: [1, 1.6], required: true,
+      });
+    }
+    const pinRequests: LabelRequest[] = [];
+    pins.slice(0, 5).forEach((p) => {
+      const s = station.get(p.census);
+      if (!s || s.census === focus?.census) return;
+      pinRequests.push({
+        id: `pin-${s.census}`, kind: "pin", text: shorten(s.title),
+        x: s.x, y: s.y, size: 14 * scale, gap: 20 * scale, charWidth: 0.58, sides: around,
+      });
+    });
+    // District names: at the district's centre if it's free and on screen, otherwise at the
+    // nearest visible block inside the district, so every district you can see gets its name.
+    // Districts you're in or have suggestions in are named before the pin labels, the rest after.
+    const homeDistricts = new Set(
+      [start?.district, ...pins.map((p) => station.get(p.census)?.district)].filter((d) => d !== undefined),
+    );
+    const homeRequests: LabelRequest[] = [];
+    const otherRequests: LabelRequest[] = [];
+    const inView = (p: { x: number; y: number }) =>
+      p.x > view.x + 60 * scale && p.x < view.x + view.w - 60 * scale && p.y > view.y + 20 * scale && p.y < view.y + view.h - 20 * scale;
+    city.districts.forEach((d) => {
+      const spots = city.stations
+        .filter((s) => s.district === d.id && inView(s))
+        .sort((a, b) => Math.hypot(a.x - d.x, a.y - d.y) - Math.hypot(b.x - d.x, b.y - d.y));
+      if (!inView(d) && spots.length === 0) return;
+      (homeDistricts.has(d.id) ? homeRequests : otherRequests).push({
+        id: `district-${d.id}`, kind: "district", text: d.name,
+        x: inView(d) ? d.x : spots[0].x, y: inView(d) ? d.y : spots[0].y, spots,
+        size: (zoomedIn ? 15 : 13) * scale, gap: 0, charWidth: 0.7, sides: ["center"],
+      });
+    });
+    return placeLabels([...requests, ...homeRequests, ...pinRequests, ...otherRequests], obstacles);
+  }, [pins, station, start, path.length, highlight, pinSet, city, scale, zoomedIn, view]);
+
   return (
     <div className="city">
       <svg
@@ -153,31 +215,29 @@ export function CityMap({ city, stops, pins, path, selected, hovered, onSelect, 
             )),
           )}
         </g>
-        <g className="district-labels">
-          {city.districts.map((d) => (
-            <text key={d.id} x={d.x} y={d.y} className="district-label" fontSize={r(zoomedIn ? 15 : 13)} strokeWidth={r(5)}>
-              {d.name}
-            </text>
-          ))}
-        </g>
         <g className="stations">
           {city.stations.map((s) =>
             pinSet.has(s.census) ? null : (
-              <circle
+              <g
                 key={s.census}
                 data-station
-                cx={s.x}
-                cy={s.y}
-                r={r(highlight === s.census ? 5 : zoomedIn ? 3 : 1.9)}
-                stroke={lineOf(s.family).color}
-                strokeWidth={r(zoomedIn ? 1.6 : 1.2)}
                 className="station"
                 onClick={() => onSelect(s.census)}
                 onPointerEnter={() => onHover(s.census)}
                 onPointerLeave={() => onHover(null)}
               >
+                <circle
+                  cx={s.x}
+                  cy={s.y}
+                  r={r(highlight === s.census ? 6 : zoomedIn ? 4 : 2.8)}
+                  stroke={lineOf(s.family).color}
+                  strokeWidth={r(zoomedIn ? 2 : 1.6)}
+                  className="station-dot"
+                />
+                {/* invisible, larger target so the small dots are easy to hover and click */}
+                <circle cx={s.x} cy={s.y} r={r(6)} className="station-hit" />
                 <title>{s.title}</title>
-              </circle>
+              </g>
             ),
           )}
         </g>
@@ -193,7 +253,7 @@ export function CityMap({ city, stops, pins, path, selected, hovered, onSelect, 
           </g>
         )}
         <g className="pins">
-          {pins.map((p, i) => {
+          {pins.map((p, i) => ({ p, i })).reverse().map(({ p, i }) => {
             const s = station.get(p.census);
             if (!s) return null;
             const on = selected === p.census || hovered === p.census;
@@ -214,11 +274,6 @@ export function CityMap({ city, stops, pins, path, selected, hovered, onSelect, 
                 <text x={s.x} y={s.y} className="pin-number" fontSize={r(12)}>
                   {i + 1}
                 </text>
-                {(on || i < 5) && (
-                  <text x={s.x + r(20)} y={s.y} className="pin-label" fontSize={r(14)}>
-                    {shorten(s.title)}
-                  </text>
-                )}
               </g>
             );
           })}
@@ -228,24 +283,36 @@ export function CityMap({ city, stops, pins, path, selected, hovered, onSelect, 
           return s ? <circle key={`via-${c}`} cx={s.x} cy={s.y} r={r(8)} className="via" /> : null;
         })}
         {start && (
-          <g className="here" transform={`translate(${start.x} ${start.y}) scale(${scale})`} pointerEvents="none">
-            <circle r={16} className="here-ring" />
-            <rect x={-11} y={-3.5} width={22} height={7} rx={1} className="here-bar" />
-            <text x={24} y={-18} className="here-text">
-              {path.length > 1 ? "Start" : "You are here"}
-            </text>
+          <g
+            className="here-marker"
+            data-station
+            transform={`translate(${start.x} ${start.y}) scale(${scale})`}
+            role="button"
+            tabIndex={0}
+            aria-label="Your current station"
+            onClick={onSelectStart}
+            onKeyDown={(e) => e.key === "Enter" && onSelectStart()}
+          >
+            <circle r={20} className="here-halo" />
+            <circle r={11} className="here-edge" />
+            <circle r={9} className="here-dot-map" />
           </g>
         )}
-        {hovered !== null && !pinSet.has(hovered) && station.get(hovered) && (
-          <text
-            x={station.get(hovered)!.x + r(10)}
-            y={station.get(hovered)!.y - r(10)}
-            className="pin-label"
-            fontSize={r(14)}
-          >
-            {shorten(station.get(hovered)!.title)}
-          </text>
-        )}
+        <g className="labels">
+          {labels.map((l) => (
+            <text
+              key={l.id}
+              x={l.x}
+              y={l.y}
+              className={l.kind === "here" ? "here-text" : l.kind === "district" ? "district-label" : "pin-label"}
+              fontSize={l.size}
+              textAnchor={l.anchor}
+              strokeWidth={r(l.kind === "district" ? 5 : 4)}
+            >
+              {l.text}
+            </text>
+          ))}
+        </g>
       </svg>
       <div className="zoom" role="group" aria-label="Zoom">
         <button type="button" aria-label="Zoom in" onClick={() => zoomAt(1 / 1.5, view.x + view.w / 2, view.y + view.h / 2)}>
@@ -258,6 +325,7 @@ export function CityMap({ city, stops, pins, path, selected, hovered, onSelect, 
           ⤢
         </button>
       </div>
+      <MapKey />
       {stops.size === 0 && <p className="city-hint">Tell us a little on the left and your next stops appear as pins.</p>}
     </div>
   );

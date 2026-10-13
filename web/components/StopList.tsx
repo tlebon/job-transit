@@ -42,7 +42,10 @@ export function StopList({ pins, sort, onSort, selected, onSelect, onHover }: Pr
               <span className="list-num" style={{ borderColor: lineOf(p.family).color }}>
                 {i + 1}
               </span>
-              <span className="list-title">{p.title}</span>
+              <span className="list-title">
+                {p.title}
+                {p.reach_label && <span className="list-sub">{p.reach_label}</span>}
+              </span>
             </button>
           </li>
         ))}
