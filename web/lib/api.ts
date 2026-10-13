@@ -16,10 +16,14 @@ export type JobMatch = { census: number; matched_title: string; occupation: stri
 
 export type Profile = {
   job: number | null;
+  extra_jobs: number[];
   answers: Record<string, number>;
   chips: string[];
   quiz: Record<string, number>;
   education: string | null;
+  description: string | null;
+  activities: string[];
+  tools: string[];
 };
 
 export type Occupation = {
@@ -51,7 +55,15 @@ export type Stop = Occupation & {
 };
 
 export type Recommendation = {
-  origin: (Occupation & { kind: "your job" | "nearest station"; nearby: string[] }) | null;
+  origin:
+    | (Occupation & {
+        kind: "your job" | "your work" | "nearest station";
+        nearby: string[];
+        mix: { census: number; title: string; weight: number }[];
+      })
+    | null;
+  evidence: { statement: string; task: string; occupation: string; similarity: number }[];
+  tools_matched: string[];
   signals: {
     job: boolean;
     skills_answered: number;
@@ -89,6 +101,7 @@ export type CvResult = {
   education_field: string | null;
   years_experience: number | null;
   tools: string[];
+  activities: string[];
   answers: Record<string, number>;
 };
 
@@ -112,4 +125,14 @@ export const api = {
     }),
 };
 
-export const EMPTY_PROFILE: Profile = { job: null, answers: {}, chips: [], quiz: {}, education: null };
+export const EMPTY_PROFILE: Profile = {
+  job: null,
+  extra_jobs: [],
+  answers: {},
+  chips: [],
+  quiz: {},
+  education: null,
+  description: null,
+  activities: [],
+  tools: [],
+};

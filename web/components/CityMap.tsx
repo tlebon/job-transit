@@ -118,7 +118,6 @@ export function CityMap({ city, stops, pins, path, selected, hovered, onSelect, 
 
   const zoomedIn = FULL.w / view.w > 1.6;
   const highlight = hovered ?? selected;
-  const onRoute = useMemo(() => new Set([...path, ...pins.map((p) => p.census)]), [path, pins]);
   const start = path.length ? station.get(path[0]) : undefined;
   const r = (base: number) => base * scale;
 
@@ -153,27 +152,6 @@ export function CityMap({ city, stops, pins, path, selected, hovered, onSelect, 
               <polygon key={`${d.id}-${i}`} points={ring.map((p) => p.join(",")).join(" ")} className="district-edge" />
             )),
           )}
-        </g>
-        <g className="lines">
-          {city.lines.map((l) => {
-            const a = station.get(l.a);
-            const b = station.get(l.b);
-            if (!a || !b) return null;
-            const touches = highlight !== null && (l.a === highlight || l.b === highlight);
-            const relevant = touches || (onRoute.has(l.a) && onRoute.has(l.b));
-            if (!relevant) return null;
-            return (
-              <line
-                key={`${l.a}-${l.b}`}
-                x1={a.x}
-                y1={a.y}
-                x2={b.x}
-                y2={b.y}
-                className={touches ? "line line-on" : "line"}
-                strokeWidth={r(touches ? 2.5 : 1.5)}
-              />
-            );
-          })}
         </g>
         <g className="district-labels">
           {city.districts.map((d) => (

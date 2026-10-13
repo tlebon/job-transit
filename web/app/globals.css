@@ -54,7 +54,7 @@ body {
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
 }
-button, input, select { font: inherit; color: inherit; }
+button, input, select, textarea { font: inherit; color: inherit; }
 :focus-visible { outline: 3px solid var(--signal); outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 
@@ -214,7 +214,7 @@ button, input, select { font: inherit; color: inherit; }
 /* ---- Job City map ---- */
 .board-body { position: relative; }
 .city {
-  position: relative; aspect-ratio: 1080 / 780; max-height: 78vh; width: 100%; border-radius: var(--radius-m); overflow: hidden;
+  position: relative; height: min(74vh, 780px); min-height: 380px; width: 100%; border-radius: var(--radius-m); overflow: hidden;
   background: var(--map-land); border: 1px solid var(--rule);
 }
 .city-loading { display: grid; place-items: center; color: var(--ink-3); }
@@ -295,3 +295,39 @@ button, input, select { font: inherit; color: inherit; }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .block { fill: hsl(var(--h) 16% 21%); }
 }
+
+.evidence { font-size: 14px; color: var(--ink-2); margin-top: 4px; }
+.evidence summary { cursor: pointer; color: var(--ink); font-weight: 600; }
+.evidence ul { margin: 6px 0; padding-left: 18px; }
+.evidence li { margin-bottom: 4px; }
+
+/* ---- first-run flow and profile drawer ---- */
+.topbar-actions { margin-left: auto; display: flex; align-items: center; gap: 16px; }
+.top-button { height: 36px; padding: 0 14px; border-radius: var(--radius-s); border: 1px solid var(--rule); background: var(--paper); cursor: pointer; font-weight: 600; }
+.top-button[aria-expanded="true"] { background: var(--ink); color: var(--panel); border-color: var(--ink); }
+@media (max-width: 640px) { .tagline { display: none; } }
+.layout-full { grid-template-columns: minmax(0, 1fr); max-width: 1400px; }
+
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 16px;
+  background: rgba(12, 16, 20, 0.5);
+}
+.modal {
+  width: min(620px, 100%); max-height: calc(100vh - 32px); overflow: auto;
+  background: var(--panel); color: var(--ink); border-radius: var(--radius-m); border: 1px solid var(--rule);
+  padding: 22px 24px 18px;
+}
+.modal-body { display: flex; flex-direction: column; gap: 12px; }
+.modal-body h2 { margin: 6px 0 0; font-size: 26px; line-height: 1.15; font-weight: 800; letter-spacing: -0.01em; }
+.modal-lede { margin: 0; color: var(--ink-2); max-width: 56ch; }
+.modal-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 20px; }
+
+.steps { list-style: none; margin: 0 0 14px; padding: 0; display: grid; grid-template-columns: repeat(3, 1fr); position: relative; }
+.steps::before { content: ""; position: absolute; left: 10px; right: calc(33.3% - 10px); top: 8px; height: 4px; background: var(--rule); border-radius: 2px; }
+.steps li { position: relative; display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--ink-3); }
+.step-dot { width: 20px; height: 20px; border-radius: 50%; border: 4px solid var(--rule); background: var(--panel); position: relative; }
+.steps li[data-state="done"] .step-dot { border-color: var(--ink); background: var(--ink); }
+.steps li[data-state="current"] .step-dot { border-color: var(--ink); background: var(--signal); }
+.steps li[data-state="current"] { color: var(--ink); font-weight: 700; }
+.titles { display: flex; flex-direction: column; gap: 8px; }
+.title-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }

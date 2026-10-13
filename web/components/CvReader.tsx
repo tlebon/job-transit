@@ -7,6 +7,8 @@ export type CvApply = {
   job: { census: number; label: string } | null;
   education: string | null;
   answers: Record<string, number>;
+  activities: string[];
+  tools: string[];
 };
 
 function toBase64(file: File): Promise<string> {
@@ -139,6 +141,8 @@ export function CvReader({ onApply }: { onApply: (apply: CvApply) => void }) {
                 job: chosen ? { census: chosen.census, label: chosen.occupation } : null,
                 education: result.education,
                 answers: result.answers,
+                activities: result.activities ?? [],
+                tools: result.tools,
               });
               setApplied(true);
             }}

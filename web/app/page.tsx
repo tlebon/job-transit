@@ -2,16 +2,18 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Board, type Trip } from "@/components/Board";
-import { CvReader } from "@/components/CvReader";
-import { JobPicker } from "@/components/JobPicker";
+import { CvReader, type CvApply } from "@/components/CvReader";
+import { JobTitles, type Title } from "@/components/JobTitles";
 import { Leg } from "@/components/Leg";
+import { Onboarding } from "@/components/Onboarding";
 import { Scale } from "@/components/Scale";
 import { api, EMPTY_PROFILE, type CityMap, type Meta, type Profile, type Recommendation, type SortKey } from "@/lib/api";
 import { educationYears } from "@/lib/travel";
 
 const STORAGE_KEY = "job-transit-profile-v1";
+const ONBOARDED_KEY = "job-transit-onboarded-v1";
 
-type Saved = { profile: Profile; jobLabel: string | null };
+type Saved = { profile: Profile; jobLabel: string | null; extraLabels?: Record<number, string> };
 
 function load(): Saved | null {
   try {
@@ -34,6 +36,7 @@ export default function Home() {
   const [meta, setMeta] = useState<Meta | null>(null);
   const [profile, setProfile] = useState<Profile>(EMPTY_PROFILE);
   const [jobLabel, setJobLabel] = useState<string | null>(null);
+  const [extraLabels, setExtraLabels] = useState<Record<number, string>>({});
   const [sort, setSort] = useState<SortKey>("best");
   const [data, setData] = useState<Recommendation | null>(null);
   const [loading, setLoading] = useState(false);
@@ -41,19 +44,29 @@ export default function Home() {
   const [showAllSkills, setShowAllSkills] = useState(false);
   const [city, setCity] = useState<CityMap | null>(null);
   const [trip, setTrip] = useState<Trip | null>(null);
+  const [onboarding, setOnboarding] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   useEffect(() => {
     const saved = load();
     if (saved) {
       setProfile({ ...EMPTY_PROFILE, ...saved.profile });
       setJobLabel(saved.jobLabel);
+      setExtraLabels(saved.extraLabels ?? {});
     }
+    let seen = false;
+    try {
+      seen = localStorage.getItem(ONBOARDED_KEY) === "1";
+    } catch {
+      /* storage blocked: show the welcome flow each visit */
+    }
+    if (!seen) setOnboarding(true);
     api.meta().then(setMeta).catch((e: Error) => setError(e.message));
     api.map().then(setCity).catch((e: Error) => setError(e.message));
   }, []);
 
   useEffect(() => {
-    save({ profile, jobLabel });
+    save({ profile, jobLabel, extraLabels });
     const controller = new AbortController();
     const timer = setTimeout(() => {
       setLoading(true);
@@ -76,9 +89,17 @@ export default function Home() {
   }, [profile, sort, jobLabel, trip]);
 
   // a new starting job starts a new trip
-  useEffect(() => setTrip(null), [profile.job]);
+  useEffect(() => setTrip(null), [profile.job, profile.extra_jobs]);
 
   const update = (patch: Partial<Profile>) => setProfile((p) => ({ ...p, ...patch }));
+  // typing shouldn't fire a request per keystroke: keep the draft locally, commit after a pause
+  const [descriptionDraft, setDescriptionDraft] = useState<string | null>(null);
+  useEffect(() => {
+    if (descriptionDraft === null) return;
+    const timer = setTimeout(() => update({ description: descriptionDraft.trim() || null }), 700);
+    return () => clearTimeout(timer);
+  }, [descriptionDraft]);
+  const setDescription = (text: string) => setDescriptionDraft(text);
   const setIn = (key: "answers" | "quiz", id: string, value: number | undefined) =>
     setProfile((p) => {
       const next = { ...p[key] };
@@ -91,6 +112,48 @@ export default function Home() {
     () => (meta ? meta.items.filter((i) => i.core || showAllSkills) : []),
     [meta, showAllSkills],
   );
+  const applyCv = ({ job, education, answers, activities, tools }: CvApply) => {
+    setProfile((p) => ({
+      ...p,
+      job: job ? job.census : p.job,
+      education: education ?? p.education,
+      answers: { ...answers, ...p.answers },
+      activities,
+      tools,
+    }));
+    if (job) setJobLabel(job.label);
+  };
+
+  const titles: Title[] = [
+    ...(profile.job !== null && jobLabel ? [{ census: profile.job, label: jobLabel }] : []),
+    ...profile.extra_jobs.map((c) => ({ census: c, label: extraLabels[c] ?? `Occupation ${c}` })),
+  ];
+  const setTitles = (next: Title[]) => {
+    const [first, ...rest] = next;
+    update({ job: first?.census ?? null, extra_jobs: rest.map((t) => t.census) });
+    setJobLabel(first?.label ?? null);
+    setExtraLabels(Object.fromEntries(rest.map((t) => [t.census, t.label])));
+  };
+  const toggleChip = (chip: string) =>
+    setProfile((p) => ({ ...p, chips: p.chips.includes(chip) ? p.chips.filter((c) => c !== chip) : [...p.chips, chip] }));
+  const finishOnboarding = () => {
+    setOnboarding(false);
+    try {
+      localStorage.setItem(ONBOARDED_KEY, "1");
+    } catch {
+      /* fine: it just shows again next time */
+    }
+  };
+  const startOver = () => {
+    setProfile(EMPTY_PROFILE);
+    setJobLabel(null);
+    setExtraLabels({});
+    setTrip(null);
+    setDescriptionDraft(null);
+    setDrawerOpen(false);
+    setOnboarding(true);
+  };
+
   const nSkills = Object.keys(profile.answers).length;
   const nQuiz = Object.keys(profile.quiz).length;
 
@@ -100,9 +163,32 @@ export default function Home() {
         <span className="roundel" aria-hidden="true" />
         <span className="brand">Job Transit</span>
         <span className="tagline">Plan your next stop</span>
+        <span className="topbar-actions">
+          <button type="button" className="top-button" aria-expanded={drawerOpen} onClick={() => setDrawerOpen(!drawerOpen)}>
+            {drawerOpen ? "Hide your profile" : "Your profile"}
+          </button>
+          <button type="button" className="linkish" onClick={startOver}>
+            Start over
+          </button>
+        </span>
       </header>
 
-      <main className="layout">
+      {onboarding && (
+        <Onboarding
+          meta={meta}
+          profile={profile}
+          description={descriptionDraft ?? profile.description ?? ""}
+          titles={titles}
+          onTitles={setTitles}
+          onDescription={setDescription}
+          onApplyCv={applyCv}
+          onToggleChip={toggleChip}
+          onFinish={finishOnboarding}
+        />
+      )}
+
+      <main className={drawerOpen ? "layout" : "layout layout-full"}>
+        {drawerOpen && (
         <div className="planner">
           <Leg
             title="Start from your CV"
@@ -110,25 +196,34 @@ export default function Home() {
             status="Optional"
             done={false}
           >
-            <CvReader
-              onApply={({ job, education, answers }) => {
-                setProfile((p) => ({
-                  ...p,
-                  job: job ? job.census : p.job,
-                  education: education ?? p.education,
-                  answers: { ...answers, ...p.answers },
-                }));
-                if (job) setJobLabel(job.label);
-              }}
-            />
+            <CvReader onApply={applyCv} />
           </Leg>
 
           <Leg
-            title="What are you into?"
-            hint="Tap anything that sounds like you"
+            title="Your work"
+            hint="Job title and what the work actually involves"
+            status={titles.length || profile.description ? "Set" : "Optional"}
+            done={profile.job !== null || Boolean(profile.description)}
+          >
+            <JobTitles titles={titles} onChange={setTitles} />
+            <label className="cv-row">
+              <span className="q-text">What do you actually do?</span>
+              <span className="q-help">A few lines in your own words. Titles hide a lot; this helps place you.</span>
+              <textarea
+                className="field area"
+                rows={3}
+                placeholder="Lead a team of five engineers, review code, plan sprints, still write some frontend features"
+                value={descriptionDraft ?? profile.description ?? ""}
+                onChange={(e) => setDescription(e.target.value)}
+              />
+            </label>
+          </Leg>
+
+          <Leg
+            title="What interests you?"
+            hint="Topics you enjoy or would like to work with"
             status={profile.chips.length ? `${profile.chips.length} picked` : "Optional"}
             done={profile.chips.length > 0}
-            defaultOpen
           >
             <div className="chips">
               {meta?.chips.map((chip) => {
@@ -140,30 +235,13 @@ export default function Home() {
                     className="chip"
                     aria-pressed={on}
                     title={chip.description}
-                    onClick={() =>
-                      update({ chips: on ? profile.chips.filter((c) => c !== chip.name) : [...profile.chips, chip.name] })
-                    }
+                    onClick={() => toggleChip(chip.name)}
                   >
                     {chip.name}
                   </button>
                 );
               })}
             </div>
-          </Leg>
-
-          <Leg
-            title="Where are you starting from?"
-            hint="Your current or most recent job"
-            status={jobLabel ? "Set" : "Optional"}
-            done={profile.job !== null}
-          >
-            <JobPicker
-              value={profile.job !== null && jobLabel ? { census: profile.job, label: jobLabel } : null}
-              onChange={(v) => {
-                update({ job: v?.census ?? null });
-                setJobLabel(v?.label ?? null);
-              }}
-            />
           </Leg>
 
           <Leg
@@ -235,18 +313,8 @@ export default function Home() {
             </select>
           </Leg>
 
-          <button
-            type="button"
-            className="linkish"
-            onClick={() => {
-              setProfile(EMPTY_PROFILE);
-              setJobLabel(null);
-              setTrip(null);
-            }}
-          >
-            Start over
-          </button>
         </div>
+        )}
 
         <Board
           city={city}

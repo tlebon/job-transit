@@ -46,7 +46,15 @@ export function Board({ city, data, sort, onSort, error, trip, schooling, onCont
     <section className="board">
       <div className="board-head">
         <div className="here-label">
-          {trip ? "Your route so far" : origin?.kind === "your job" ? "You are here" : origin ? "Rough placement from your answers" : "Job City"}
+          {trip
+            ? "Your route so far"
+            : origin?.kind === "your job"
+              ? "You are here"
+              : origin?.kind === "your work"
+                ? "Closest to your work"
+                : origin
+                  ? "Rough placement from your answers"
+                  : "Job City"}
         </div>
         <h1 className="here">
           {trip
@@ -55,6 +63,29 @@ export function Board({ city, data, sort, onSort, error, trip, schooling, onCont
               ? origin.title
               : "Where to next?"}
         </h1>
+        {!trip && origin && origin.mix.length > 1 && origin.kind !== "nearest station" && (
+          <p className="near-note">
+            Your work looks like{" "}
+            {origin.mix
+              .slice(0, 4)
+              .map((m) => `${m.title} (${Math.round(m.weight * 100)}%)`)
+              .join(", ")}
+            .
+          </p>
+        )}
+        {!trip && data && data.evidence.length > 0 && (
+          <details className="evidence">
+            <summary>Why we placed you here</summary>
+            <ul>
+              {data.evidence.slice(0, 5).map((e) => (
+                <li key={e.statement}>
+                  “{e.statement}” matches “{e.task}” ({e.occupation})
+                </li>
+              ))}
+            </ul>
+            {data.tools_matched.length > 0 && <p>Tools recognised: {data.tools_matched.join(", ")}.</p>}
+          </details>
+        )}
         {!trip && origin?.kind === "nearest station" && (
           <p className="near-note">
             {origin.nearby.length ? `Also close to ${origin.nearby.slice(0, 2).join(" and ")}. ` : ""}
@@ -106,8 +137,8 @@ export function Board({ city, data, sort, onSort, error, trip, schooling, onCont
         </aside>
       </div>
       <p className="footnote">
-        Nearby means similar skills. Lines are the busiest real job moves in the US (CPS 2015–2021). Riders: share of
-        people leaving your stop who land there. Travel time is a rough guide from typical education and training.
+        Nearby means similar skills. Riders: share of people leaving your stop who land there, from real US job moves
+        (CPS 2015–2021). Travel time is a rough guide from typical education and training.
       </p>
     </section>
   );
@@ -145,7 +176,7 @@ function Legend() {
     <section className="legend" aria-label="How to read Job City">
       <h2>Job City</h2>
       <p>Every block is an occupation. Neighbours need similar skills, and districts group jobs that draw on the same kind of knowledge.</p>
-      <p>Start on the left: pick a few interests, give your job or CV. Your best next stops appear as numbered pins, with routes from where you are.</p>
+      <p>Tell us about your work and interests (Your profile, top right). Your best next stops appear as numbered pins, with routes from where you are.</p>
       <p>Click any stop to see the route: travel time, line changes, pay and outlook. Then continue from there to plan a second step.</p>
     </section>
   );
