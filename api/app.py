@@ -15,10 +15,16 @@ engine = Engine()
 
 class ProfileIn(BaseModel):
     job: int | None = None
+    extra_jobs: list[int] = Field(default_factory=list)
     answers: dict[str, float] = Field(default_factory=dict)
     chips: list[str] = Field(default_factory=list)
     quiz: dict[str, float] = Field(default_factory=dict)
     education: str | None = None
+    description: str | None = None
+    activities: list[str] = Field(default_factory=list)
+    tools: list[str] = Field(default_factory=list)
+    hobbies: str | None = None
+    goals: list[str] = Field(default_factory=list)
 
 
 class RecommendIn(BaseModel):
@@ -57,6 +63,41 @@ def occupation(code: int):
     return engine.occupation(code)
 
 
+class StopIn(BaseModel):
+    profile: ProfileIn
+    census: int
+
+
+@app.post("/stop")
+def stop(body: StopIn):
+    """The stop page: what the job is, why it fits, the skill gap, how to get there, and the outlook."""
+    if body.census not in engine.position:
+        raise HTTPException(404, "Unknown occupation code")
+    return engine.stop_details(Profile(**body.profile.model_dump()), body.census)
+
+
+class PlaceIn(BaseModel):
+    statements: list[str] = Field(default_factory=list)
+    tools: list[str] = Field(default_factory=list)
+    k: int = Field(5, ge=1, le=50)
+
+
+@app.post("/place")
+def place(body: PlaceIn):
+    """Occupations that best match what someone does (for evaluation and debugging)."""
+    if engine.placer is None:
+        raise HTTPException(503, "Placement assets are not built (api/build_embeddings.py).")
+    result = engine.placer.place(body.statements, body.tools, k=body.k)
+    if result is None:
+        return {"stations": [], "evidence": [], "tools": []}
+    return {
+        "stations": [{"census": int(engine.codes[s]), "title": engine.census["title"].iat[s], "weight": round(float(w), 4)}
+                     for s, w in zip(result["stations"], result["weights"])],
+        "evidence": result["evidence"],
+        "tools": result["tools"],
+    }
+
+
 @app.post("/recommend")
 def recommend(body: RecommendIn):
     if body.profile.job is not None and body.profile.job not in engine.position:
@@ -78,6 +119,8 @@ def cv(body: CvIn):
         raise HTTPException(400, str(e))
     except RuntimeError as e:
         raise HTTPException(503, str(e))
+    except Exception as e:  # API errors (key, credits, network) come back as a readable message, not a bare 500
+        raise HTTPException(502, f"Couldn't read the CV: {type(e).__name__}: {e}")
 
     job_matches = []
     for job in record.get("jobs", [])[:3]:
@@ -94,5 +137,6 @@ def cv(body: CvIn):
         "education_field": record.get("education_field") or None,
         "years_experience": record.get("years_experience"),
         "tools": record.get("tools", []),
+        "activities": record.get("activities", []),
         "answers": answers,
     }

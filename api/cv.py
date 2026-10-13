@@ -5,6 +5,7 @@ Configure with ANTHROPIC_API_KEY (required) and ANTHROPIC_MODEL (optional) in th
 """
 import base64
 import os
+from functools import lru_cache
 
 import anthropic
 from dotenv import load_dotenv
@@ -36,6 +37,10 @@ def _schema(items, education_ladder):
                           "description": "Highest education completed."},
             "education_field": {"type": "string", "description": "Main field of study, or empty."},
             "years_experience": {"type": "number", "description": "Total years of work experience."},
+            "activities": {"type": "array", "items": {"type": "string"},
+                           "description": ("5-15 short statements of what the person actually does or did in recent "
+                                           "roles, each starting with a verb, in plain words (e.g. 'Build internal "
+                                           "dashboards for sales teams', 'Mentor junior engineers'). Most recent work first.")},
             "tools": {"type": "array", "items": {"type": "string"},
                       "description": "Software, tools, equipment or methods named in the CV. Max 15."},
             "skill_ratings": {
@@ -45,7 +50,7 @@ def _schema(items, education_ladder):
                 "properties": {item["key"]: {"type": "integer", "minimum": 1, "maximum": 5} for item in items},
             },
         },
-        "required": ["summary", "jobs", "education", "skill_ratings"],
+        "required": ["summary", "jobs", "education", "activities", "skill_ratings"],
     }
 
 
@@ -93,3 +98,35 @@ def read_cv(items, education_ladder, text: str | None = None, pdf_base64: str | 
         if block.type == "tool_use":
             return block.input
     raise RuntimeError("The model did not return a CV record.")
+
+
+@lru_cache(maxsize=512)
+def activities_from_text(text: str) -> tuple[str, ...]:
+    """Rewrite a free-text description of someone's work as short task-like statements.
+
+    Task statements in O*NET are verb-first ("Write supporting code for Web applications"); terse or chatty
+    descriptions ("coding, infra stuff, slack") embed poorly against them, so this puts them in the same form.
+    Raises RuntimeError without an API key; callers fall back to splitting the text as-is.
+    """
+    if not os.getenv("ANTHROPIC_API_KEY"):
+        raise RuntimeError("ANTHROPIC_API_KEY is not set.")
+    client = anthropic.Anthropic()
+    response = client.messages.create(
+        model=MODEL,
+        max_tokens=600,
+        tools=[{"name": "record_activities", "description": "Record the activities.", "input_schema": {
+            "type": "object",
+            "properties": {"activities": {"type": "array", "items": {"type": "string"},
+                                          "description": "3-10 short statements, each starting with a verb, in plain words."}},
+            "required": ["activities"]}}],
+        tool_choice={"type": "tool", "name": "record_activities"},
+        messages=[{"role": "user", "content": (
+            "Rewrite this description of someone's work as short statements of what they actually do, "
+            "each starting with a verb (e.g. 'Write code for web applications', 'Mentor junior engineers'). "
+            "Keep their specifics (domain, tools, who they work with); don't invent anything.\n\n"
+            f"<description>\n{text[:4000]}\n</description>")}],
+    )
+    for block in response.content:
+        if block.type == "tool_use":
+            return tuple(a for a in block.input.get("activities", []) if a.strip())
+    return ()

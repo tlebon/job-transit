@@ -25,16 +25,23 @@ MIN_ANSWERS_FOR_RANK_MATCH = 4
 ENGINEERING_ITEM = "kn: Engineering and Technology"
 COMPUTERS_ITEM = "kn: Computers and Electronics"
 SOFTWARE_JOB_THRESHOLD = 4.0  # O*NET importance of Computers and Electronics for the job
+JOB_WEIGHT_WITH_TEXT = 0.5     # when someone gives a job *and* describes their work, how much the title counts
 
 
 @dataclass
 class Profile:
     """Everything a person has told us so far. Every field is optional."""
     job: int | None = None                                   # census code of current / last job
+    extra_jobs: list[int] = field(default_factory=list)      # further titles that together describe the job
     answers: dict[str, float] = field(default_factory=dict)  # survey item key -> 1..5
     chips: list[str] = field(default_factory=list)           # interest area names
     quiz: dict[str, float] = field(default_factory=dict)     # quiz activity id -> 1..5
     education: str | None = None                             # BLS education label
+    description: str | None = None                           # free text: what they actually do
+    activities: list[str] = field(default_factory=list)      # short statements, e.g. from a CV
+    tools: list[str] = field(default_factory=list)           # software / tools they use
+    hobbies: str | None = None                               # free text: what they do for fun
+    goals: list[str] = field(default_factory=list)           # pay, stability, less_ai, passion
 
 
 class Engine:
@@ -78,6 +85,16 @@ class Engine:
         self.search_rows = search[["title", "census", "onet_title", "source"]].to_dict("records")
 
         self.education_rank = {label: i for i, label in enumerate(self.meta["education_ladder"])}
+
+        self.placer = None
+        if (ASSETS / "embed" / "task-vectors.npy").exists():
+            from api.embeddings import Placer
+            self.placer = Placer(self.codes)
+        else:
+            print("Placement from text disabled: run api/export_embedder.py and api/build_embeddings.py")
+
+        details_file = ASSETS / "census-details.json"
+        self.details = json.loads(details_file.read_text()) if details_file.exists() else {}
 
         city = pd.read_parquet(ASSETS / "census-map.parquet").set_index("census").loc[self.codes]
         layout = json.loads((ASSETS / "map.json").read_text())
@@ -223,25 +240,76 @@ class Engine:
         return np.mean(parts, axis=0) if parts else None
 
     # ---- main entry ------------------------------------------------------------------------
-    def recommend(self, profile: Profile, sort: str = "best", limit: int = 30):
+    def mixture(self, stations, weights, answered, known_job: bool):
+        """Expected move shares and skill similarity, averaged over starting stations with the given weights."""
+        reach, similarity = np.zeros(len(self.codes)), np.zeros(len(self.codes))
+        vector = np.zeros(len(self.item_order))
+        for station, weight in zip(stations, weights):
+            station_answers = self.reinterpret_for_software(answered, station)
+            station_vector = self.nudged_profile(station, station_answers)
+            vector += weight * station_vector
+            station_similarity = self.skill_similarity(station_vector)
+            shares = self.move_shares(int(self.codes[station]), station_similarity, known_job=known_job)
+            shares[stations] = 0.0  # don't suggest the places you already are
+            reach += weight * shares / max(shares.sum(), 1e-12)
+            similarity += weight * station_similarity
+        return reach, similarity, vector
+
+    def place(self, profile: Profile):
+        """Weighted occupations from what the person does (statements + tools), or None."""
+        from api.embeddings import split_statements
+        described = []
+        if profile.description:
+            try:
+                from api.cv import activities_from_text
+                described = list(activities_from_text(profile.description.strip()))
+            except Exception:  # no key, network or API error: use the text as written
+                described = split_statements(profile.description) or [profile.description]
+        statements = list(profile.activities) + described
+        if self.placer is None or not (statements or profile.tools):
+            return None
+        return self.placer.place(statements, profile.tools)
+
+    def start(self, profile: Profile):
+        """Where the person starts: weighted stations, plus everything derived from them."""
         answered = {k: v for k, v in profile.answers.items() if k in self.item_position}
-        origin, origin_kind, nearby, similarity, reach = None, None, [], None, None
+        placement = self.place(profile)
+        origin, origin_kind, stations, weights, known = None, None, None, None, True
 
         if profile.job is not None and profile.job in self.position:
             origin, origin_kind = profile.job, "your job"
-            answered = self.reinterpret_for_software(answered, self.position[origin])
-            similarity = self.skill_similarity(self.nudged_profile(self.position[origin], answered))
-            reach = self.move_shares(origin, similarity, known_job=True)
+            # several titles can describe one job (e.g. engineering manager + developer); they share the weight
+            titles = list(dict.fromkeys([profile.job] + [j for j in profile.extra_jobs if j in self.position]))
+            title_weight = JOB_WEIGHT_WITH_TEXT if placement else 1.0
+            combined = {self.position[j]: title_weight / len(titles) for j in titles}
+            if placement:
+                for st, w in zip(placement["stations"], placement["weights"]):
+                    combined[int(st)] = combined.get(int(st), 0.0) + (1 - JOB_WEIGHT_WITH_TEXT) * w
+            stations, weights = np.array(list(combined)), np.array(list(combined.values()))
+        elif placement:
+            stations, weights = placement["stations"], placement["weights"]
+            origin, origin_kind = int(self.codes[stations[0]]), "your work"
         elif answered:
             stations, weights = self.nearest_stations(answered)
-            origin, origin_kind = int(self.codes[stations[0]]), "nearest station"
-            nearby = [self.census["title"].iat[i] for i in stations[1:]]
-            reach = np.zeros(len(self.codes))
-            similarity = np.zeros(len(self.codes))
-            for station, weight in zip(stations, weights):
-                station_similarity = self.skill_similarity(self.nudged_profile(station, answered))
-                reach += weight * self.move_shares(int(self.codes[station]), station_similarity, known_job=False)
-                similarity += weight * station_similarity
+            origin, origin_kind, known = int(self.codes[stations[0]]), "nearest station", False
+
+        reach = similarity = vector = None
+        mix = []
+        if stations is not None:
+            order = np.argsort(-weights)
+            stations, weights = stations[order], weights[order] / weights.sum()
+            reach, similarity, vector = self.mixture(stations, weights, answered, known_job=known)
+            mix = [{"census": int(self.codes[s]), "title": self.census["title"].iat[s], "weight": round(float(w), 3)}
+                   for s, w in zip(stations, weights)]
+        return {"answered": answered, "placement": placement, "origin": origin, "origin_kind": origin_kind,
+                "reach": reach, "similarity": similarity, "vector": vector, "mix": mix}
+
+    def recommend(self, profile: Profile, sort: str = "best", limit: int = 30):
+        st = self.start(profile)
+        answered, placement, origin, origin_kind = st["answered"], st["placement"], st["origin"], st["origin_kind"]
+        reach, similarity, mix = st["reach"], st["similarity"], st["mix"]
+        evidence = placement["evidence"][:8] if placement else []
+        nearby = [m["title"] for m in mix if m["census"] != origin][:4]
         n_answered = len(answered)
 
         appeal = self.interest_fit(profile)
@@ -258,21 +326,33 @@ class Engine:
         user_level = self.education_rank.get(profile.education) if profile.education else None
         frame["education_gap"] = frame["education_level"] - user_level if user_level is not None else None
 
+        if reach is not None:
+            frame["reach_rank"] = frame["reach_share"].rank(ascending=False, method="first")
+            frame["reach_label"] = np.select([frame["reach_rank"] <= 10, frame["reach_rank"] <= 50],
+                                             ["Common move", "Occasional move"], "Rare move")
+
+        appeal_weight = 0.7 if "passion" in profile.goals else 0.5
         if reach is not None and appeal is not None:
-            frame["best"] = np.sqrt(frame["reach_score"] * frame["appeal_pct"])
+            frame["best"] = frame["reach_score"] ** (1 - appeal_weight) * frame["appeal_pct"] ** appeal_weight
         elif reach is not None:
-            frame["best"] = frame["reach_share"]
+            frame["best"] = frame["reach_score"]
         elif appeal is not None:
             frame["best"] = frame["appeal_pct"]
         else:
             frame["best"] = None
+        if frame["best"].notna().any():
+            frame["best"] = frame["best"] * self.goal_factor(frame, profile.goals)
         order_by = {"best": "best", "reachable": "reach_share", "appealing": "appeal_pct"}.get(sort, "best")
+        if order_by not in frame or frame[order_by].isna().all():
+            order_by = "best"
         if frame[order_by].isna().all():
             order_by = "best"
         ranked = frame.sort_values(order_by, ascending=False).head(limit) if frame[order_by].notna().any() else frame.head(0)
 
         return {
-            "origin": self.occupation(origin) | {"kind": origin_kind, "nearby": nearby} if origin else None,
+            "origin": self.occupation(origin) | {"kind": origin_kind, "nearby": nearby, "mix": mix} if origin else None,
+            "evidence": evidence,
+            "tools_matched": placement["tools"] if placement else [],
             "signals": {
                 "job": profile.job is not None,
                 "skills_answered": n_answered,
@@ -285,6 +365,59 @@ class Engine:
             "sort": order_by,
             "results": [{"census": int(code), **_clean(row.to_dict())} for code, row in ranked.iterrows()],
         }
+
+    @staticmethod
+    def goal_factor(frame: pd.DataFrame, goals: list[str]):
+        """Multiplier (0.6-1.4 per goal) nudging 'best fit' toward what the person wants from a change."""
+        factor = pd.Series(1.0, index=frame.index)
+        signals = {
+            "pay": frame["median_wage"].rank(pct=True),
+            "stability": frame["growth_pct"].rank(pct=True),
+            "less_ai": 1 - frame["ai_theoretical_pct_in_zone"],
+        }
+        for goal in goals:
+            if goal in signals:
+                factor *= (0.6 + 0.8 * signals[goal]).fillna(1.0)
+        return factor
+
+    def item_label(self, key: str):
+        item = next(i for i in self.meta["items"] if i["key"] == key)
+        return item.get("label") or (f"Knowledge of {item['name']}" if item["kind"] == "knowledge" else item["name"])
+
+    def stop_details(self, profile: Profile, code: int):
+        """Everything the stop page shows for one destination, relative to where the person starts."""
+        st = self.start(profile)
+        d = self.position[code]
+        info = self.details.get(str(code), {})
+        out = {"occupation": self.occupation(code), **info}
+
+        if st["reach"] is not None:
+            reach = st["reach"].copy()
+            ranks = pd.Series(reach).rank(ascending=False, method="first")
+            rank = int(ranks.iat[d])
+            out["reach"] = {"share": round(float(reach[d]), 5), "rank": rank,
+                            "label": "Common move" if rank <= 10 else "Occasional move" if rank <= 50 else "Rare move",
+                            "from": self.census["title"].iat[self.position[st["origin"]]] if st["origin"] else None}
+            out["skill_match"] = round(float(st["similarity"][d]), 3)
+
+        if st["vector"] is not None:
+            you = st["vector"]
+            job = self.census_skills_raw[d]
+            diff = job - you
+            gaps = [i for i in np.argsort(-diff) if diff[i] >= 0.6 and job[i] >= 3.0][:5]
+            transfers = [i for i in np.argsort(-np.minimum(you, job)) if you[i] >= 3.0 and job[i] >= 3.0][:5]
+            out["gaps"] = [{"item": self.item_label(self.item_order[i]), "needed": round(float(job[i]), 1),
+                            "you": round(float(you[i]), 1)} for i in gaps]
+            out["transfers"] = [{"item": self.item_label(self.item_order[i]), "needed": round(float(job[i]), 1),
+                                 "you": round(float(you[i]), 1)} for i in transfers]
+
+        if st["origin"] is not None:
+            here = self.census.loc[st["origin"]]
+            there = self.census.loc[code]
+            if pd.notna(here["median_wage"]) and pd.notna(there["median_wage"]):
+                out["pay_change_pct"] = round(float(there["median_wage"] / here["median_wage"] - 1) * 100, 1)
+            out["from_occupation"] = self.occupation(st["origin"])
+        return out
 
 
 ABBREVIATIONS = {
@@ -327,6 +460,8 @@ def _confidence(profile: Profile, n_answered: int):
     """Rough 0-1 indicator of how much the results rest on, for the UI. Not a calibrated probability."""
     score = 0.0
     score += 0.35 if profile.job is not None else 0.0
+    score += 0.3 if (profile.description or profile.activities) else 0.0
+    score += 0.05 if profile.tools else 0.0
     score += 0.35 * min(n_answered / 15, 1.0)
     score += 0.1 * min(n_answered / 43, 1.0)
     score += 0.1 if (profile.chips or len(profile.quiz) >= 6) else 0.0

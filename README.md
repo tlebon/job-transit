@@ -40,5 +40,8 @@ Suggests realistic next jobs from your skills, interests and where people actual
    rank correlation on the answered items), and the ranker's predictions from those stations are averaged.
 3. Pair features (size, wage and zone differences, same major group, skill similarity) go into the ranker:
    LightGBM blended with observed 2015–2021 moves (k = 100) for a known job, Poisson for answer-based stations.
+   With a CV or a description of the work, the text is matched against all ~19k O*NET task statements with a
+   sentence-embedding model (multi-qa-MiniLM, PyTorch → ONNX int8, see `api/export_embedder.py` and
+   `api/build_embeddings.py`), giving a weighted mix of occupations as the starting point (hybrid roles).
 4. Interest fit comes from the chips (O*NET interest areas) and the activity quiz (RIASEC), as percentiles.
 5. "Best fit" combines a log-scaled reach score with interest fit; growth, wage, education and AI exposure are shown per stop.
