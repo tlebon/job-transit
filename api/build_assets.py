@@ -196,9 +196,9 @@ std_frame = pd.DataFrame(standardized, columns=item_order)
 distinctive = [std_frame[district_of == d].mean().sort_values(ascending=False).index.tolist()
                for d in range(N_DISTRICTS)]
 cost = np.full((N_DISTRICTS, len(DISTRICT_NAMES)), 100.0)
-for d, items in enumerate(distinctive):
+for d, top_items in enumerate(distinctive):
     for n, (keys, _) in enumerate(DISTRICT_NAMES):
-        hits = [items.index(k) for k in keys if k in items]
+        hits = [top_items.index(k) for k in keys if k in top_items]
         if hits:
             cost[d, n] = min(hits)
 rows, cols = linear_sum_assignment(cost)
@@ -252,6 +252,43 @@ census_map.to_parquet(OUT / "census-map.parquet", index=False)
     "lines": lines,
     "blocks": {int(code): block for code, block in zip(codes, blocks)},
 }, separators=(",", ":")))
+
+# ---- stop pages: what each occupation is ------------------------------------------------
+# Description and core tasks from the occupation's main O*NET member (the ".00" code if there is one),
+# tasks ordered by rated importance; example titles from O*NET's sample of reported titles. For catch-all
+# census codes ("..., all other", "Miscellaneous ...") the member O*NET occupations are listed instead,
+# since those are the real jobs hiding inside (e.g. Data Scientists in "Miscellaneous mathematical science").
+occupation_data = pd.read_csv(RAW / "occupation_data.csv").set_index("O*NET-SOC Code")
+task_statements = pd.read_csv(RAW / "task_statements.csv")
+task_importance = pd.read_csv(RAW / "task_ratings.csv")
+task_importance = task_importance[task_importance["Scale ID"] == "IM"].set_index("Task ID")["Data Value"]
+task_statements["importance"] = task_statements["Task ID"].map(task_importance)
+reported_titles = pd.read_csv(RAW / "sample_of_reported_titles.csv")
+
+details = {}
+for code in codes:
+    members = census_onet.loc[census_onet["census"] == code, "onet"].tolist()
+    members = [m for m in members if m in occupation_data.index]
+    if not members:
+        continue
+    main = next((m for m in members if m.endswith(".00")), members[0])
+    tasks = (task_statements[(task_statements["O*NET-SOC Code"] == main) & (task_statements["Task Type"] == "Core")]
+             .sort_values("importance", ascending=False)["Task"].head(5).tolist())
+    title = str(titles.get(code, ""))
+    catch_all = "all other" in title.lower() or title.lower().startswith("miscellaneous")
+    if catch_all:
+        examples = [occupation_data.at[m, "Title"] for m in members if not occupation_data.at[m, "Title"].endswith("All Other")]
+    else:
+        shown = reported_titles[reported_titles["O*NET-SOC Code"].isin(members)]
+        shown = shown.sort_values("Shown in My Next Move", ascending=False)
+        examples = shown["Reported Job Title"].drop_duplicates().tolist()
+    details[str(int(code))] = {
+        "description": occupation_data.at[main, "Description"],
+        "tasks": tasks,
+        "example_titles": examples[:8],
+        "catch_all": catch_all,
+    }
+(OUT / "census-details.json").write_text(json.dumps(details, separators=(",", ":")))
 
 # ---- job-title search index ----------------------------------------------------------------
 onet_titles = pd.read_parquet(DERIVED / "onet-titles.parquet").rename(columns={"O*NET-SOC Code": "onet"})
