@@ -87,9 +87,14 @@ class Engine:
         self.education_rank = {label: i for i, label in enumerate(self.meta["education_ladder"])}
 
         self.placer = None
+        self.area_vectors = None
         if (ASSETS / "embed" / "task-vectors.npy").exists():
             from api.embeddings import Placer
             self.placer = Placer(self.codes)
+            chips = self.meta["chips"]
+            self.area_names = [c["name"] for c in chips]
+            self.area_vectors = self.placer.embedder.encode(
+                [f"{c['name']}: {c['description']}" for c in chips])
         else:
             print("Placement from text disabled: run api/export_embedder.py and api/build_embeddings.py")
 
@@ -217,10 +222,37 @@ class Engine:
         return share
 
     # ---- interests -------------------------------------------------------------------------
-    def interest_fit(self, profile: Profile):
+    def hobby_areas(self, hobbies: str | None, per_hobby_min: float = 0.2):
+        """Interest areas matching free-text hobbies ('bouldering, improv comedy'), via the embedding model.
+
+        Each hobby is first described in a sentence by Claude when a key is available (single words embed
+        poorly: 'bouldering' alone lands nearer Agriculture than Athletics), then matched to the 41 O*NET
+        interest areas; each hobby contributes its best-matching area(s).
+        """
+        if not hobbies or self.area_vectors is None:
+            return []
+        import re
+        try:
+            from api.cv import describe_hobbies
+            parts = list(describe_hobbies(hobbies.strip()))
+        except Exception:
+            parts = []
+        if not parts:
+            parts = [p.strip() for p in re.split(r"[,;\n]+", hobbies) if p.strip()]
+        sims = self.placer.embedder.encode(parts[:20]) @ self.area_vectors.T      # hobbies x areas
+        picked = []
+        for row in sims:
+            order = np.argsort(-row)
+            for i in order[:2]:  # a hobby can touch two areas (bouldering: athletics, outdoors)
+                if row[i] >= per_hobby_min and (i == order[0] or row[i] >= row[order[0]] - 0.03):
+                    picked.append(self.area_names[i])
+        return list(dict.fromkeys(picked))
+
+    def interest_fit(self, profile: Profile, hobby_areas: list[str] | None = None):
         """Percentile (0-1) of how well each occupation matches the person's interests, or None."""
         parts = []
-        chips = [chip for chip in profile.chips if chip in self.interest_areas.columns]
+        chips = [chip for chip in list(profile.chips) + list(hobby_areas or []) if chip in self.interest_areas.columns]
+        chips = list(dict.fromkeys(chips))
         if chips:
             parts.append(_percentile(self.interest_areas[chips].mean(axis=1).to_numpy()))
         by_type = {}
@@ -308,11 +340,12 @@ class Engine:
         st = self.start(profile)
         answered, placement, origin, origin_kind = st["answered"], st["placement"], st["origin"], st["origin_kind"]
         reach, similarity, mix = st["reach"], st["similarity"], st["mix"]
-        evidence = placement["evidence"][:8] if placement else []
+        evidence = [e | {"placed_as": self.census["title"].iat[e["placed_as"]]} for e in placement["evidence"]] if placement else []
         nearby = [m["title"] for m in mix if m["census"] != origin][:4]
         n_answered = len(answered)
 
-        appeal = self.interest_fit(profile)
+        hobby_areas = self.hobby_areas(profile.hobbies)
+        appeal = self.interest_fit(profile, hobby_areas)
 
         frame = self.census.copy()
         frame["skill_match"] = similarity
@@ -353,6 +386,7 @@ class Engine:
             "origin": self.occupation(origin) | {"kind": origin_kind, "nearby": nearby, "mix": mix} if origin else None,
             "evidence": evidence,
             "tools_matched": placement["tools"] if placement else [],
+            "hobby_areas": hobby_areas,
             "signals": {
                 "job": profile.job is not None,
                 "skills_answered": n_answered,

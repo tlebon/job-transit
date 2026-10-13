@@ -19,7 +19,6 @@ from pathlib import Path
 
 import numpy as np
 import onnxruntime as ort
-from rapidfuzz import fuzz, process, utils
 from tokenizers import Tokenizer
 
 EMBED_DIR = Path(__file__).resolve().parent / "assets" / "embed"
@@ -64,6 +63,7 @@ class Placer:
         self.task_title = index["title"]
         self.position = {int(c): i for i, c in enumerate(codes)}
         self.n = len(codes)
+        self.task_row = np.array([self.position.get(int(c), -1) for c in self.task_census])
         onet = np.array(index["onet"])
         keep = np.array([int(c) in self.position for c in self.task_census])
         order = np.argsort(onet, kind="stable")
@@ -74,14 +74,21 @@ class Placer:
         self.tool_names = list(tools)
         self.tool_census = tools
 
+    @staticmethod
+    def _tool_key(name: str) -> str:
+        return re.sub(r"[^a-z0-9+#]", "", name.lower())
+
     def tool_votes(self, tools: list[str]):
+        """Exact matches only (case and punctuation ignored): fuzzy matching turned 'Next.js' into 'Ext JS'."""
+        if not hasattr(self, "_tool_index"):
+            self._tool_index = {}
+            for name in self.tool_names:
+                self._tool_index.setdefault(self._tool_key(name), name)
         votes, matched = np.zeros(self.n), []
         for tool in tools:
-            hit = process.extractOne(tool, self.tool_names, scorer=fuzz.QRatio, processor=utils.default_process,
-                                     score_cutoff=88)
-            if not hit:
+            name = self._tool_index.get(self._tool_key(tool))
+            if not name:
                 continue
-            name = hit[0]
             occupations = [self.position[c] for c in self.tool_census[name] if c in self.position]
             if occupations:
                 votes[occupations] += 1.0 / len(occupations)  # tools used everywhere say little
@@ -106,10 +113,7 @@ class Placer:
             np.maximum.at(census_score, self.group_rows, onet_score)      # best O*NET member per census code
             weights = np.where(np.isfinite(census_score), np.exp((census_score - onet_score.max()) / TEMPERATURE), 0.0)
             text_votes = weights / weights.sum()
-            for i, row in enumerate(sims):
-                best = int(np.argmax(row))
-                evidence.append({"statement": statements[i], "task": self.task_text[best],
-                                 "occupation": self.task_title[best], "similarity": round(float(row[best]), 3)})
+            self._sims = sims
 
         tool_votes, matched_tools = self.tool_votes(tools or [])
         if matched_tools:
@@ -122,4 +126,22 @@ class Placer:
             return None
         top = np.argsort(-votes)[:k]
         weights = votes[top] / votes[top].sum()
+        if statements:
+            evidence = self.evidence_for(statements, self._sims, top[:3])
         return {"stations": top, "weights": weights, "evidence": evidence, "tools": matched_tools}
+
+    def evidence_for(self, statements, sims, stations, per_station: int = 2):
+        """For each placed occupation, the person's lines that match its tasks best (what drove the placement)."""
+        out = []
+        for station in stations:
+            tasks = np.flatnonzero(self.task_row == station)
+            if len(tasks) == 0:
+                continue
+            block = sims[:, tasks]
+            best_task = block.argmax(axis=1)
+            best_sim = block.max(axis=1)
+            for i in np.argsort(-best_sim)[:per_station]:
+                t = tasks[best_task[i]]
+                out.append({"placed_as": int(station), "statement": statements[i], "task": self.task_text[t],
+                            "occupation": self.task_title[t], "similarity": round(float(best_sim[i]), 3)})
+        return out

@@ -23,14 +23,18 @@ def _schema(items, education_ladder):
             "summary": {"type": "string", "description": "One sentence on the person's career so far, in plain words."},
             "jobs": {
                 "type": "array",
-                "description": "Jobs from the CV, most recent first. Max 5.",
+                "description": ("Roles from the CV, most recent first, max 6. Include full-time training programmes "
+                                "(bootcamps, intensive courses) as kind 'program'; leave out degrees."),
                 "items": {
                     "type": "object",
                     "properties": {
-                        "title": {"type": "string", "description": "Job title as a short, common title (e.g. 'Frontend developer')."},
+                        "title": {"type": "string", "description": "Role as a short, common job title (e.g. 'Frontend developer'). For a programme, the field it trains for (e.g. 'Machine learning engineer')."},
                         "years": {"type": "number", "description": "Approximate years in this role."},
+                        "current": {"type": "boolean", "description": "True if the role is ongoing ('present')."},
+                        "kind": {"type": "string", "enum": ["job", "program"]},
+                        "label": {"type": "string", "description": "How the CV names it, short (e.g. 'Engineering Manager, Wire')."},
                     },
-                    "required": ["title"],
+                    "required": ["title", "current", "kind"],
                 },
             },
             "education": {"type": "string", "enum": education_ladder + ["Unknown"],
@@ -129,4 +133,32 @@ def activities_from_text(text: str) -> tuple[str, ...]:
     for block in response.content:
         if block.type == "tool_use":
             return tuple(a for a in block.input.get("activities", []) if a.strip())
+    return ()
+
+
+@lru_cache(maxsize=512)
+def describe_hobbies(text: str) -> tuple[str, ...]:
+    """One plain sentence per hobby saying what doing it involves ('Bouldering: climbing short walls; a physical,
+    problem-solving sport, often social'). Single words embed poorly; a sentence lets the embedding model match
+    the hobby to O*NET interest areas. Raises RuntimeError without an API key."""
+    if not os.getenv("ANTHROPIC_API_KEY"):
+        raise RuntimeError("ANTHROPIC_API_KEY is not set.")
+    client = anthropic.Anthropic()
+    response = client.messages.create(
+        model=MODEL,
+        max_tokens=600,
+        tools=[{"name": "record_hobbies", "description": "Record the hobbies.", "input_schema": {
+            "type": "object",
+            "properties": {"hobbies": {"type": "array", "items": {"type": "string"},
+                                       "description": "One sentence per hobby: '<hobby>: what doing it involves'."}},
+            "required": ["hobbies"]}}],
+        tool_choice={"type": "tool", "name": "record_hobbies"},
+        messages=[{"role": "user", "content": (
+            "For each hobby or interest below, write one short sentence describing what doing it involves "
+            "(activity, setting, skills used). Keep the person's own hobbies; don't add new ones.\n\n"
+            f"<hobbies>\n{text[:2000]}\n</hobbies>")}],
+    )
+    for block in response.content:
+        if block.type == "tool_use":
+            return tuple(h for h in block.input.get("hobbies", []) if h.strip())
     return ()

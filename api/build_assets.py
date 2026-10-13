@@ -20,6 +20,7 @@ from sklearn.preprocessing import StandardScaler
 
 ROOT = Path(__file__).resolve().parent.parent
 RAW = ROOT / "data" / "raw" / "db_31_0_csv"
+RAW_BLS = ROOT / "data" / "raw" / "bls"
 DERIVED = ROOT / "data" / "derived"
 OUT = ROOT / "api" / "assets"
 OUT.mkdir(exist_ok=True)
@@ -37,6 +38,39 @@ CORE_ITEMS = [
 QUESTION_OVERRIDES = {
     "kn: Engineering and Technology": "Engineering: applying engineering science to design and build physical goods, structures, or systems.",
     "kn: Therapy and Counseling": "Diagnosing and treating physical or mental conditions, or providing therapy or counseling (not general mentoring).",
+}
+
+# Display names for the catch-all census codes ("..., all other", "Miscellaneous ..."), named after the
+# recognisable jobs inside them. The official title is kept as official_title and shown on the stop page.
+DISPLAY_TITLES = {
+    430: "Compliance, project & other managers",
+    740: "Business project managers, sustainability specialists & more",
+    950: "Quant analysts & fraud examiners",
+    1107: "IT project managers, QA testers, UI designers & more tech",
+    1240: "Data scientists & other math roles",
+    1530: "Robotics, energy & other engineers",
+    1760: "Remote sensing & other physical scientists",
+    1860: "Planners, anthropologists, historians & more",
+    1965: "Quality control, environmental & forensic technicians",
+    2025: "Health educators & community health workers",
+    2160: "Title examiners, court reporters & more",
+    2760: "DJs & other performers",
+    2860: "Interpreters & translators",
+    3245: "Art & music therapists",
+    3260: "Acupuncturists, naturopaths & more",
+    3535: "Neurodiagnostic, prosthetics & hearing aid technicians",
+    3655: "Medical equipment preparers & therapy assistants",
+    3730: "Security supervisors",
+    3955: "Lifeguards, loss prevention & more",
+    4430: "Amusement park & venue attendants",
+    4520: "Manicurists, skincare specialists & makeup artists",
+    4840: "Service sales representatives",
+    6050: "Farmworkers & farm equipment operators",
+    6765: "Weatherization installers, pavers & more",
+    7260: "Tire, RV & bicycle mechanics",
+    7750: "Assemblers & fabricators",
+    8630: "Refinery, gas & chemical plant operators",
+    8965: "CNC operators & other production workers",
 }
 
 # Question titles shown in the app where the O*NET name misleads.
@@ -133,7 +167,8 @@ outlook = pd.read_parquet(DERIVED / "census-outlook.parquet").set_index("census"
 exposure = pd.read_parquet(DERIVED / "census-theoretical-exposure.parquet").set_index("census").reindex(codes)
 
 census = pd.DataFrame({
-    "title": titles,
+    "title": pd.Series([DISPLAY_TITLES.get(code, t) for code, t in titles.items()], index=titles.index),
+    "official_title": titles,
     "family": features["soc_major"].map(FAMILY_OF),
     "soc_major": features["soc_major"],
     "log_size": features["log_size"],
@@ -150,6 +185,14 @@ census = pd.DataFrame({
 })
 zone_band = census["job_zone"].round()
 census["ai_theoretical_pct_in_zone"] = census.groupby(zone_band)["ai_theoretical"].rank(pct=True)
+
+# BLS relative AI exposure (2025-35 release), built in notebook 06; optional so older checkouts still build
+bls_exposure_path = DERIVED / "census-bls-exposure.parquet"
+if bls_exposure_path.exists():
+    bls_exposure = pd.read_parquet(bls_exposure_path).set_index("census").reindex(codes)
+    census["bls_ai_exposure"] = bls_exposure["bls_ai_category"]
+else:
+    census["bls_ai_exposure"] = None
 census["education_level"] = census["entry_education"].map({label: i for i, label in enumerate(EDUCATION_LADDER)})
 census = census.reset_index()
 census.to_parquet(OUT / "census.parquet", index=False)
@@ -265,6 +308,27 @@ task_importance = task_importance[task_importance["Scale ID"] == "IM"].set_index
 task_statements["importance"] = task_statements["Task ID"].map(task_importance)
 reported_titles = pd.read_csv(RAW / "sample_of_reported_titles.csv")
 
+# Employment per O*NET member, from the BLS 2025 matrix (exact SOC code, else the most specific combined code),
+# so a catch-all lists its biggest jobs first.
+bls_matrix = pd.read_excel(RAW_BLS / "ai-exposure-categories.xlsx", "AI Exposure Categories", header=1).rename(
+    columns={"2025 National Employment Matrix code": "nem_code", "Employment, 2025": "emp_2025"})
+bls_matrix = bls_matrix[bls_matrix["nem_code"].astype(str).str.match(r"^\d\d-\d{4}$")]
+bls_employment = bls_matrix.set_index("nem_code")["emp_2025"].astype(float).to_dict()
+bls_prefixes = {code.rstrip("0").rstrip("-"): emp for code, emp in bls_employment.items()}
+
+
+def member_employment(onet_code: str) -> float:
+    soc = onet_code[:7]
+    if soc in bls_employment:
+        return bls_employment[soc]
+    prefixes = [p for p in bls_prefixes if soc.startswith(p)]
+    return bls_prefixes[max(prefixes, key=len)] if prefixes else 0.0
+
+
+def first_sentence(text: str) -> str:
+    return text.split(". ")[0].rstrip(".") + "."
+
+
 details = {}
 for code in codes:
     members = census_onet.loc[census_onet["census"] == code, "onet"].tolist()
@@ -277,16 +341,22 @@ for code in codes:
     title = str(titles.get(code, ""))
     catch_all = "all other" in title.lower() or title.lower().startswith("miscellaneous")
     if catch_all:
-        examples = [occupation_data.at[m, "Title"] for m in members if not occupation_data.at[m, "Title"].endswith("All Other")]
+        named = [m for m in members if not occupation_data.at[m, "Title"].endswith("All Other")]
+        # members sharing one SOC code (e.g. the nine under "Computer occupations, all other") split its employment
+        sharing = pd.Series([m[:7] for m in named]).value_counts()
+        named.sort(key=lambda m: -member_employment(m) / sharing[m[:7]])
+        examples = [occupation_data.at[m, "Title"] for m in named]
     else:
         shown = reported_titles[reported_titles["O*NET-SOC Code"].isin(members)]
         shown = shown.sort_values("Shown in My Next Move", ascending=False)
         examples = shown["Reported Job Title"].drop_duplicates().tolist()
     details[str(int(code))] = {
-        "description": occupation_data.at[main, "Description"],
-        "tasks": tasks,
+        "description": None if catch_all else occupation_data.at[main, "Description"],
+        "tasks": [] if catch_all else tasks,
         "example_titles": examples[:8],
         "catch_all": catch_all,
+        "members": [{"title": occupation_data.at[m, "Title"], "summary": first_sentence(occupation_data.at[m, "Description"])}
+                    for m in named[:8]] if catch_all else [],
     }
 (OUT / "census-details.json").write_text(json.dumps(details, separators=(",", ":")))
 

@@ -123,9 +123,10 @@ def cv(body: CvIn):
         raise HTTPException(502, f"Couldn't read the CV: {type(e).__name__}: {e}")
 
     job_matches = []
-    for job in record.get("jobs", [])[:3]:
+    for job in record.get("jobs", [])[:6]:
         top = engine.search_jobs(job["title"], limit=3)
-        job_matches.append({"title": job["title"], "years": job.get("years"), "matches": top})
+        job_matches.append({"title": job["title"], "label": job.get("label") or job["title"], "years": job.get("years"),
+                            "current": bool(job.get("current")), "kind": job.get("kind", "job"), "matches": top})
 
     known_items = set(engine.item_order)
     answers = {k: float(v) for k, v in (record.get("skill_ratings") or {}).items() if k in known_items}
