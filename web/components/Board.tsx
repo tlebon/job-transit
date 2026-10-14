@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { CityMap as CityMapData, Occupation, Profile, Recommendation, SortKey, Stop } from "@/lib/api";
 import { CityMap } from "./CityMap";
 import { OriginCard } from "./OriginCard";
@@ -43,54 +43,67 @@ export function Board({ city, data, sort, onSort, error, trip, schooling, reques
   }, [stops, selected, currentCode]);
 
   const selectedStop = selected !== null ? stops.get(selected) : undefined;
+  const side = useRef<HTMLElement>(null);
+  useEffect(() => {
+    // one-column layout (phones, narrow windows): the stop page opens below the map, so bring it into view
+    if (selected !== null && window.matchMedia("(max-width: 1100px)").matches) {
+      side.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [selected]);
+  const showMix = Boolean(origin && origin.mix.length > 1 && origin.kind !== "nearest station");
   const baseSchooling = schooling ?? yearsFor(start?.entry_education) ?? 4;
 
   return (
     <section className="board">
       <div className="board-head">
-        <div className="here-label">
-          {trip
-            ? "Your route so far"
-            : origin?.kind === "your job"
-              ? "You are here"
-              : origin?.kind === "your work"
-                ? "Closest to your work"
+        <div className="board-head-top">
+          <div>
+            <div className="here-label">
+              {trip
+                ? "Your route so far"
+                : origin?.kind === "your job"
+                  ? "You are here"
+                  : origin?.kind === "your work"
+                    ? "Closest to your work"
+                    : origin
+                      ? "Rough placement from your answers"
+                      : "Job City"}
+            </div>
+            <h1 className="here">
+              {trip
+                ? [trip.start, ...trip.legs].map((o) => o.title).join(" → ")
                 : origin
-                  ? "Rough placement from your answers"
-                  : "Job City"}
+                  ? origin.title
+                  : "Where to next?"}
+            </h1>
+          </div>
+          {data && <Signal confidence={data.confidence} />}
         </div>
-        <h1 className="here">
-          {trip
-            ? [trip.start, ...trip.legs].map((o) => o.title).join(" → ")
-            : origin
-              ? origin.title
-              : "Where to next?"}
-        </h1>
-        {!trip && origin && origin.mix.length > 1 && origin.kind !== "nearest station" && (
-          <p className="near-note">
-            Your work looks like{" "}
-            {origin.mix
-              .slice(0, 4)
-              .map((m) => `${m.title} (${Math.round(m.weight * 100)}%)`)
-              .join(", ")}
-            .
-          </p>
-        )}
-        {!trip && data && data.evidence.length > 0 && (
+        {!trip && data && (showMix || data.evidence.length > 0 || data.hobby_areas.length > 0) && (
           <details className="evidence">
-            <summary>Why we placed you here</summary>
-            <ul>
-              {data.evidence.map((e, i) => (
-                <li key={i}>
-                  <strong>{e.placed_as}</strong>: “{e.statement}” is like “{e.task}”
-                </li>
-              ))}
-            </ul>
+            <summary>How we placed you</summary>
+            {showMix && origin && (
+              <p>
+                Your work looks like{" "}
+                {origin.mix
+                  .slice(0, 4)
+                  .map((m) => `${m.title} (${Math.round(m.weight * 100)}%)`)
+                  .join(", ")}
+                .
+              </p>
+            )}
+            {data.evidence.length > 0 && (
+              <ul>
+                {data.evidence.map((e, i) => (
+                  <li key={i}>
+                    <strong>{e.placed_as}</strong>: “{e.statement}” is like “{e.task}”
+                  </li>
+                ))}
+              </ul>
+            )}
             {data.tools_matched.length > 0 && <p>Tools recognised: {data.tools_matched.join(", ")}.</p>}
+            {data.hobby_areas.length > 0 && <p>From your hobbies: {data.hobby_areas.join(", ")}.</p>}
           </details>
-        )}
-        {data && data.hobby_areas.length > 0 && (
-          <p className="near-note">From your hobbies we picked up: {data.hobby_areas.join(", ")}.</p>
         )}
         {!trip && origin?.kind === "nearest station" && (
           <p className="near-note">
@@ -103,7 +116,6 @@ export function Board({ city, data, sort, onSort, error, trip, schooling, reques
             Back one stop
           </button>
         )}
-        {data && <Signal confidence={data.confidence} />}
         {error && <p className="error">Couldn’t reach the planner: {error}. Check that the API is running.</p>}
       </div>
 
@@ -123,7 +135,7 @@ export function Board({ city, data, sort, onSort, error, trip, schooling, reques
         ) : (
           <div className="city city-loading">Loading the map…</div>
         )}
-        <aside className="side">
+        <aside className="side" ref={side}>
           {selected !== null && selected === currentCode && start ? (
             <OriginCard
               origin={trip ? trip.legs[trip.legs.length - 1] : start}
@@ -177,7 +189,7 @@ function Signal({ confidence }: { confidence: number }) {
   const bars = Math.round(confidence * 5);
   const label = ["No signal yet", "Weak signal", "Some signal", "Decent signal", "Good signal", "Strong signal"][bars];
   return (
-    <div className="signal">
+    <div className="signal" title="How much we know about you. Your CV, a description of your work or skill answers sharpen it.">
       <span className="signal-bars" aria-hidden="true">
         {[1, 2, 3, 4, 5].map((n) => (
           <span key={n} data-on={n <= bars} style={{ height: 4 + n * 3 }} />

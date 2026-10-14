@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Meta, Profile } from "@/lib/api";
 import { CvReader, type CvApply } from "./CvReader";
+import { ChipGroups } from "./ChipGroups";
 import { GoalPicker } from "./GoalPicker";
 import { JobTitles, type Title } from "./JobTitles";
 
@@ -19,6 +20,7 @@ type Props = {
   onHobbies: (text: string) => void;
   onToggleGoal: (goal: string) => void;
   hasCv: boolean;
+  onLoadFile: (file: File) => void;
   onFinish: () => void;
 };
 
@@ -27,7 +29,7 @@ const STEPS = ["Your CV", "Your work", "Your interests", "Your map"];
 /** First-run flow: four skippable steps, then the map. */
 export function Onboarding({
   meta, profile, titles, description, onTitles, onDescription, onApplyCv, onToggleChip,
-  hobbies, onHobbies, onToggleGoal, hasCv, onFinish,
+  hobbies, onHobbies, onToggleGoal, hasCv, onLoadFile, onFinish,
 }: Props) {
   const [step, setStep] = useState(0);
   const [rereadCv, setRereadCv] = useState(false);
@@ -80,6 +82,18 @@ export function Onboarding({
                 }}
               />
             )}
+            <label className="linkish file-pick">
+              Been here before? Load your saved profile
+              <input
+                type="file"
+                accept="application/json,.json"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) onLoadFile(file);
+                  e.target.value = "";
+                }}
+              />
+            </label>
           </section>
         )}
 
@@ -124,20 +138,7 @@ export function Onboarding({
               <span className="q-text">Topics you’d enjoy working with</span>
               <span className="q-help">Whether or not they’re part of your job now. Pick as many as you like.</span>
             </div>
-            <div className="chips">
-              {meta?.chips.map((chip) => (
-                <button
-                  key={chip.name}
-                  type="button"
-                  className="chip"
-                  aria-pressed={profile.chips.includes(chip.name)}
-                  title={chip.description}
-                  onClick={() => onToggleChip(chip.name)}
-                >
-                  {chip.name}
-                </button>
-              ))}
-            </div>
+            {meta && <ChipGroups chips={meta.chips} order={meta.riasec_order} picked={profile.chips} onToggle={onToggleChip} />}
           </section>
         )}
 

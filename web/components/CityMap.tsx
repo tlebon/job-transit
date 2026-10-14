@@ -139,7 +139,7 @@ export function CityMap({ city, stops, pins, path, selected, hovered, onSelect, 
     if (start) {
       requests.push({
         id: "here", kind: "here", text: path.length > 1 ? "Start" : "You are here",
-        x: start.x, y: start.y, size: 15 * scale, gap: 22 * scale, charWidth: 0.62, sides: around, reaches: [1, 1.6], required: true,
+        x: start.x, y: start.y, size: 15 * scale, gap: 22 * scale, charWidth: 0.66, sides: around, reaches: [1, 1.6], required: true,
       });
     }
     const focus = highlight !== null ? station.get(highlight) : undefined;
@@ -147,7 +147,7 @@ export function CityMap({ city, stops, pins, path, selected, hovered, onSelect, 
       requests.push({
         id: `focus-${focus.census}`, kind: "pin", text: shorten(focus.title),
         x: focus.x, y: focus.y, size: 14 * scale, gap: (pinSet.has(focus.census) ? 20 : 9) * scale,
-        charWidth: 0.58, sides: around, reaches: [1, 1.6], required: true,
+        charWidth: 0.62, sides: around, reaches: [1, 1.6], required: true,
       });
     }
     const pinRequests: LabelRequest[] = [];
@@ -156,7 +156,7 @@ export function CityMap({ city, stops, pins, path, selected, hovered, onSelect, 
       if (!s || s.census === focus?.census) return;
       pinRequests.push({
         id: `pin-${s.census}`, kind: "pin", text: shorten(s.title),
-        x: s.x, y: s.y, size: 14 * scale, gap: 20 * scale, charWidth: 0.58, sides: around,
+        x: s.x, y: s.y, size: 14 * scale, gap: 20 * scale, charWidth: 0.62, sides: around,
       });
     });
     // District names: at the district's centre if it's free and on screen, otherwise at the
@@ -180,7 +180,8 @@ export function CityMap({ city, stops, pins, path, selected, hovered, onSelect, 
         size: (zoomedIn ? 15 : 13) * scale, gap: 0, charWidth: 0.7, sides: ["center"],
       });
     });
-    return placeLabels([...requests, ...homeRequests, ...pinRequests, ...otherRequests], obstacles);
+    const visible = { x0: view.x, y0: view.y, x1: view.x + view.w, y1: view.y + view.h };
+    return placeLabels([...requests, ...homeRequests, ...pinRequests, ...otherRequests], obstacles, visible);
   }, [pins, station, start, path.length, highlight, pinSet, city, scale, zoomedIn, view]);
 
   return (

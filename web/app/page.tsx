@@ -6,6 +6,7 @@ import { CvReader, type CvApply } from "@/components/CvReader";
 import { JobTitles, type Title } from "@/components/JobTitles";
 import { Leg } from "@/components/Leg";
 import { GoalPicker } from "@/components/GoalPicker";
+import { ChipGroups } from "@/components/ChipGroups";
 import { Logo } from "@/components/Logo";
 import { Onboarding } from "@/components/Onboarding";
 import { Scale } from "@/components/Scale";
@@ -175,6 +176,37 @@ export default function Home() {
       /* fine: it just shows again next time */
     }
   };
+  // Save the profile to a file and load it back: a stand-in for accounts, so nothing has to be retyped.
+  const [fileError, setFileError] = useState<string | null>(null);
+  const saveToFile = () => {
+    const blob = new Blob([JSON.stringify({ app: "job-transit", version: 1, profile, jobLabel, extraLabels, cv }, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "job-transit-profile.json";
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+  const loadFromFile = async (file: File) => {
+    setFileError(null);
+    try {
+      const saved = JSON.parse(await file.text());
+      if (saved?.app !== "job-transit" || typeof saved.profile !== "object") throw new Error("not a Job Transit profile");
+      setProfile({ ...EMPTY_PROFILE, ...saved.profile });
+      setJobLabel(saved.jobLabel ?? null);
+      setExtraLabels(saved.extraLabels ?? {});
+      setCv(saved.cv ?? null);
+      setHobbiesDraft(null);
+      setDescriptionDraft(null);
+      setTrip(null);
+      finishOnboarding();
+    } catch (e) {
+      setFileError(`Couldn’t load that file: ${e instanceof Error ? e.message : "unreadable"}.`);
+    }
+  };
+
   const startOver = () => {
     setProfile(EMPTY_PROFILE);
     setJobLabel(null);
@@ -224,6 +256,7 @@ export default function Home() {
           onHobbies={setHobbiesDraft}
           onToggleGoal={toggleGoal}
           hasCv={cv !== null}
+          onLoadFile={loadFromFile}
           onFinish={finishOnboarding}
         />
       )}
@@ -314,23 +347,7 @@ export default function Home() {
             </label>
             {data && data.hobby_areas.length > 0 && <p className="q-help">Picked up: {data.hobby_areas.join(", ")}</p>}
             <span className="q-text">Or tap topics</span>
-            <div className="chips">
-              {meta?.chips.map((chip) => {
-                const on = profile.chips.includes(chip.name);
-                return (
-                  <button
-                    key={chip.name}
-                    type="button"
-                    className="chip"
-                    aria-pressed={on}
-                    title={chip.description}
-                    onClick={() => toggleChip(chip.name)}
-                  >
-                    {chip.name}
-                  </button>
-                );
-              })}
-            </div>
+            {meta && <ChipGroups chips={meta.chips} order={meta.riasec_order} picked={profile.chips} onToggle={toggleChip} />}
           </Leg>
 
           <Leg
@@ -411,6 +428,27 @@ export default function Home() {
             </select>
           </Leg>
 
+          <div className="profile-file">
+            <span className="q-help">Nothing is stored on our side. Save your profile to pick it up on another device.</span>
+            <div className="profile-file-actions">
+              <button type="button" className="linkish" onClick={saveToFile}>
+                Save to a file
+              </button>
+              <label className="linkish file-pick">
+                Load from a file
+                <input
+                  type="file"
+                  accept="application/json,.json"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) loadFromFile(file);
+                    e.target.value = "";
+                  }}
+                />
+              </label>
+            </div>
+            {fileError && <p className="error">{fileError}</p>}
+          </div>
         </div>
         )}
 

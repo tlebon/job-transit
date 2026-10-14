@@ -63,7 +63,10 @@ function candidate(req: LabelRequest, side: Side, reach = 1, at = { x: req.x, y:
   return { box, label: { id: req.id, kind: req.kind, text: req.text, x, y, size: req.size, anchor } };
 }
 
-export function placeLabels(requests: LabelRequest[], obstacles: Box[]): PlacedLabel[] {
+const inside = (a: Box, bounds?: Box) => !bounds || (a.x0 >= bounds.x0 && a.x1 <= bounds.x1 && a.y0 >= bounds.y0 && a.y1 <= bounds.y1);
+
+/** `bounds` is the visible map area: labels that would be cut off at its edge try another spot. */
+export function placeLabels(requests: LabelRequest[], obstacles: Box[], bounds?: Box): PlacedLabel[] {
   const taken = [...obstacles];
   const placed: PlacedLabel[] = [];
   for (const req of requests) {
@@ -74,9 +77,10 @@ export function placeLabels(requests: LabelRequest[], obstacles: Box[]): PlacedL
       (req.reaches ?? [1]).flatMap((reach) => req.sides.map((side) => candidate(req, side, reach, at))),
     );
     if (options.length === 0) continue;
-    let chosen = options.find((c) => !taken.some((b) => overlaps(b, c.box))) ?? null;
+    let chosen = options.find((c) => inside(c.box, bounds) && !taken.some((b) => overlaps(b, c.box))) ?? null;
     if (!chosen && req.required) {
-      const clashes = (c: (typeof options)[number]) => taken.filter((b) => overlaps(b, c.box)).length;
+      const clashes = (c: (typeof options)[number]) =>
+        taken.filter((b) => overlaps(b, c.box)).length + (inside(c.box, bounds) ? 0 : 100);
       chosen = options.reduce((best, c) => (clashes(c) < clashes(best) ? c : best));
     }
     if (chosen) {
