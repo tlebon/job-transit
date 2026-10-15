@@ -11,7 +11,6 @@ import { ChipGroups } from "@/components/ChipGroups";
 import { ExperiencePicker } from "@/components/ExperiencePicker";
 import { Logo } from "@/components/Logo";
 import { Onboarding } from "@/components/Onboarding";
-import { Scale } from "@/components/Scale";
 import {
   api,
   EMPTY_PROFILE,
@@ -62,7 +61,6 @@ export default function Home() {
   const [data, setData] = useState<Recommendation | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [showAllSkills, setShowAllSkills] = useState(false);
   const [city, setCity] = useState<CityMap | null>(null);
   const [trip, setTrip] = useState<Trip | null>(null);
   const [onboarding, setOnboarding] = useState(false);
@@ -71,7 +69,13 @@ export default function Home() {
   useEffect(() => {
     const saved = load();
     if (saved) {
-      setProfile({ ...EMPTY_PROFILE, ...saved.profile });
+      setProfile({
+        ...EMPTY_PROFILE,
+        ...saved.profile,
+        // the skill questionnaire and interest quiz were removed (notebook 09): keep only CV-derived skill ratings
+        quiz: {},
+        answers: saved.cv ? saved.profile.answers : {},
+      });
       setJobLabel(saved.jobLabel);
       setExtraLabels(saved.extraLabels ?? {});
       setCv(saved.cv ?? null);
@@ -130,23 +134,11 @@ export default function Home() {
   }, [hobbiesDraft]);
   const toggleGoal = (goal: string) =>
     setProfile((p) => ({ ...p, goals: p.goals.includes(goal) ? p.goals.filter((g) => g !== goal) : [...p.goals, goal] }));
-  const setIn = (key: "answers" | "quiz", id: string, value: number | undefined) =>
-    setProfile((p) => {
-      const next = { ...p[key] };
-      if (value === undefined) delete next[id];
-      else next[id] = value;
-      return { ...p, [key]: next };
-    });
-
-  const skillItems = useMemo(
-    () => (meta ? meta.items.filter((i) => i.core || showAllSkills) : []),
-    [meta, showAllSkills],
-  );
   const applyCv = ({ titles: cvTitles, education, answers, activities, tools, record }: CvApply) => {
     setProfile((p) => ({
       ...p,
       education: education ?? p.education,
-      answers: { ...answers, ...p.answers },
+      answers: { ...p.answers, ...answers },
       activities,
       tools,
       experience_years: record.years_experience ?? p.experience_years,
@@ -225,7 +217,13 @@ export default function Home() {
     try {
       const saved = JSON.parse(await file.text());
       if (saved?.app !== "job-transit" || typeof saved.profile !== "object") throw new Error("not a Job Transit profile");
-      setProfile({ ...EMPTY_PROFILE, ...saved.profile });
+      setProfile({
+        ...EMPTY_PROFILE,
+        ...saved.profile,
+        // the skill questionnaire and interest quiz were removed (notebook 09): keep only CV-derived skill ratings
+        quiz: {},
+        answers: saved.cv ? saved.profile.answers : {},
+      });
       setJobLabel(saved.jobLabel ?? null);
       setExtraLabels(saved.extraLabels ?? {});
       setCv(saved.cv ?? null);
@@ -254,8 +252,6 @@ export default function Home() {
     () => (trip ? { ...profile, job: trip.legs[trip.legs.length - 1].census, extra_jobs: [] } : profile),
     [profile, trip],
   );
-  const nSkills = Object.keys(profile.answers).length;
-  const nQuiz = Object.keys(profile.quiz).length;
 
   return (
     <>
@@ -398,54 +394,6 @@ export default function Home() {
             done={profile.goals.length > 0}
           >
             <GoalPicker goals={profile.goals} onToggle={toggleGoal} />
-          </Leg>
-
-          <Leg
-            title="Would you enjoy these?"
-            hint="Regardless of pay or training. Skip any you can’t judge."
-            status={nQuiz ? `${nQuiz} of ${meta?.quiz.length ?? 24}` : "Optional"}
-            done={nQuiz > 0}
-          >
-            {meta?.quiz.map((q) => (
-              <div className="question" key={q.id}>
-                <span className="q-text">{q.text}</span>
-                <Scale
-                  label={q.text}
-                  value={profile.quiz[q.id]}
-                  onChange={(v) => setIn("quiz", q.id, v)}
-                  low="Strongly dislike"
-                  high="Strongly like"
-                />
-              </div>
-            ))}
-          </Leg>
-
-          <Leg
-            title="What does your work rely on?"
-            hint="How important each is to doing your job well"
-            status={nSkills ? `${nSkills} of ${meta?.items.length ?? 43}` : "Optional"}
-            done={nSkills > 0}
-          >
-            {skillItems.map((item) => (
-              <div className="question" key={item.key}>
-                <span className="q-text">
-                  {item.label ?? (item.kind === "knowledge" ? `Knowledge of ${item.name}` : item.name)}
-                </span>
-                <span className="q-help">{item.description}</span>
-                <Scale
-                  label={item.name}
-                  value={profile.answers[item.key]}
-                  onChange={(v) => setIn("answers", item.key, v)}
-                  low="Not important"
-                  high="Extremely important"
-                />
-              </div>
-            ))}
-            {meta && (
-              <button type="button" className="linkish more" onClick={() => setShowAllSkills(!showAllSkills)}>
-                {showAllSkills ? "Show fewer questions" : `Answer ${meta.items.length - skillItems.length} more for a sharper match`}
-              </button>
-            )}
           </Leg>
 
           <Leg

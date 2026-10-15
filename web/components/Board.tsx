@@ -197,7 +197,7 @@ function Signal({ confidence }: { confidence: number }) {
   const bars = Math.round(confidence * 5);
   const label = ["No signal yet", "Weak signal", "Some signal", "Decent signal", "Good signal", "Strong signal"][bars];
   return (
-    <div className="signal" title="How much we know about you. Your CV, a description of your work or skill answers sharpen it.">
+    <div className="signal" title="How much we know about you. Your CV or a description of your work sharpens it.">
       <span className="signal-bars" aria-hidden="true">
         {[1, 2, 3, 4, 5].map((n) => (
           <span key={n} data-on={n <= bars} style={{ height: 4 + n * 3 }} />
