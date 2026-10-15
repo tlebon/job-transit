@@ -20,12 +20,20 @@ type Props = {
   request: Profile;
   onContinue: (stop: Stop) => void;
   onBack: () => void;
+  focus?: { census: number; at: number } | null; // ask the board to open a stop (e.g. from the guide)
+  onSelectedChange?: (census: number | null) => void;
 };
 
 const PIN_COUNT = 10;
 
-export function Board({ city, data, sort, onSort, error, trip, schooling, request, onContinue, onBack }: Props) {
+export function Board({ city, data, sort, onSort, error, trip, schooling, request, onContinue, onBack, focus, onSelectedChange }: Props) {
   const [selected, setSelected] = useState<number | null>(null);
+  useEffect(() => {
+    if (focus) setSelected(focus.census);
+  }, [focus]);
+  useEffect(() => {
+    onSelectedChange?.(selected);
+  }, [selected, onSelectedChange]);
   const [hovered, setHovered] = useState<number | null>(null);
 
   const stops = useMemo(() => new Map((data?.results ?? []).map((s) => [s.census, s])), [data]);

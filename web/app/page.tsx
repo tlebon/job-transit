@@ -6,7 +6,9 @@ import { CvReader, type CvApply } from "@/components/CvReader";
 import { JobTitles, type Title } from "@/components/JobTitles";
 import { Leg } from "@/components/Leg";
 import { GoalPicker } from "@/components/GoalPicker";
+import { ChatPanel } from "@/components/ChatPanel";
 import { ChipGroups } from "@/components/ChipGroups";
+import { ExperiencePicker } from "@/components/ExperiencePicker";
 import { Logo } from "@/components/Logo";
 import { Onboarding } from "@/components/Onboarding";
 import { Scale } from "@/components/Scale";
@@ -14,6 +16,7 @@ import {
   api,
   EMPTY_PROFILE,
   type CityMap,
+  type ChatAction,
   type CvResult,
   type Meta,
   type Profile,
@@ -146,6 +149,7 @@ export default function Home() {
       answers: { ...answers, ...p.answers },
       activities,
       tools,
+      experience_years: record.years_experience ?? p.experience_years,
     }));
     if (cvTitles.length) setTitles(cvTitles);
     setCv(record);
@@ -166,6 +170,33 @@ export default function Home() {
     setJobLabel(first?.label ?? null);
     setExtraLabels(Object.fromEntries(rest.map((t) => [t.census, t.label])));
   };
+  // The guide (chat): it can open stops on the map and change the profile.
+  const [chatOpen, setChatOpen] = useState(false);
+  const [viewing, setViewing] = useState<number | null>(null);
+  const [focus, setFocus] = useState<{ census: number; at: number } | null>(null);
+  const onChatAction = (action: ChatAction) => {
+    if (action.type === "open_stop") {
+      setTrip(null);
+      setFocus({ census: action.census, at: Date.now() });
+      return;
+    }
+    setProfile((p) => ({
+      ...p,
+      goals: action.goals ?? p.goals,
+      hobbies: action.hobbies ?? p.hobbies,
+      experience_years: action.experience_years ?? p.experience_years,
+      extra_jobs:
+        action.add_title !== undefined && action.add_title !== p.job && !p.extra_jobs.includes(action.add_title)
+          ? [...p.extra_jobs, action.add_title]
+          : p.extra_jobs,
+    }));
+    if (action.hobbies !== undefined) setHobbiesDraft(null);
+    if (action.add_title !== undefined && action.add_title_label) {
+      setExtraLabels((labels) => ({ ...labels, [action.add_title!]: action.add_title_label! }));
+    }
+  };
+
+  const setExperience = (years: number | null) => setProfile((p) => ({ ...p, experience_years: years }));
   const toggleChip = (chip: string) =>
     setProfile((p) => ({ ...p, chips: p.chips.includes(chip) ? p.chips.filter((c) => c !== chip) : [...p.chips, chip] }));
   const finishOnboarding = () => {
@@ -233,6 +264,9 @@ export default function Home() {
         <span className="brand">Job Transit</span>
         <span className="tagline">Plan your next stop</span>
         <span className="topbar-actions">
+          <button type="button" className="top-button top-guide" aria-expanded={chatOpen} onClick={() => setChatOpen(!chatOpen)}>
+            Ask the guide
+          </button>
           <button type="button" className="top-button" aria-expanded={drawerOpen} onClick={() => setDrawerOpen(!drawerOpen)}>
             {drawerOpen ? "Hide your profile" : "Your profile"}
           </button>
@@ -256,12 +290,14 @@ export default function Home() {
           onHobbies={setHobbiesDraft}
           onToggleGoal={toggleGoal}
           hasCv={cv !== null}
+          experienceYears={profile.experience_years}
+          onExperience={setExperience}
           onLoadFile={loadFromFile}
           onFinish={finishOnboarding}
         />
       )}
 
-      <main className={drawerOpen ? "layout" : "layout layout-full"}>
+      <main className={`${drawerOpen ? "layout" : "layout layout-full"}${chatOpen ? " with-chat" : ""}`}>
         {drawerOpen && (
         <div className="planner">
           <Leg
@@ -327,6 +363,11 @@ export default function Home() {
                 onChange={(e) => setDescription(e.target.value)}
               />
             </label>
+            <div className="cv-row">
+              <span className="q-text">How much work experience do you have?</span>
+              <span className="q-help">Some jobs, mostly management, usually need 5+ years in a related job.</span>
+              <ExperiencePicker years={profile.experience_years} onChange={setExperience} />
+            </div>
           </Leg>
 
           <Leg
@@ -466,8 +507,13 @@ export default function Home() {
             setTrip((t) => (t ? { ...t, legs: [...t.legs, stop] } : { start: data.origin!, legs: [stop] }));
           }}
           onBack={() => setTrip((t) => (t && t.legs.length > 1 ? { ...t, legs: t.legs.slice(0, -1) } : null))}
+          focus={focus}
+          onSelectedChange={setViewing}
         />
       </main>
+      {chatOpen && (
+        <ChatPanel profile={profile} selected={viewing} onAction={onChatAction} onClose={() => setChatOpen(false)} />
+      )}
     </>
   );
 }

@@ -26,6 +26,7 @@ export type Profile = {
   tools: string[];
   hobbies: string | null;
   goals: string[];
+  experience_years: number | null;
 };
 
 export type Occupation = {
@@ -129,6 +130,7 @@ export type StopDetails = {
   example_titles?: string[];
   catch_all?: boolean;
   members?: { title: string; summary: string }[];
+  experience_note?: string;
   reach?: { share: number; rank: number; label: string; from: string | null };
   skill_match?: number;
   gaps?: SkillLine[];
@@ -176,4 +178,53 @@ export const EMPTY_PROFILE: Profile = {
   tools: [],
   hobbies: null,
   goals: [],
+  experience_years: null,
 };
+
+// ---- the guide (chat) ----------------------------------------------------------------------
+export type ChatMessage = { role: "user" | "assistant"; content: string };
+export type ChatAction =
+  | { type: "open_stop"; census: number }
+  | {
+      type: "update_profile";
+      goals?: string[];
+      hobbies?: string;
+      experience_years?: number;
+      add_title?: number;
+      add_title_label?: string;
+    };
+export type ChatEvent =
+  | { type: "text"; text: string }
+  | { type: "tool"; label: string }
+  | { type: "action"; action: ChatAction }
+  | { type: "error"; message: string }
+  | { type: "done" };
+
+/** Streams the guide's reply (server-sent events) and calls onEvent for each event. */
+export async function streamChat(
+  body: { messages: ChatMessage[]; profile: Profile; selected: number | null },
+  onEvent: (event: ChatEvent) => void,
+  signal?: AbortSignal,
+) {
+  const res = await fetch(`${API_URL}/chat`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+    signal,
+  });
+  if (!res.ok || !res.body) throw new Error(`${res.status} ${await res.text()}`);
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const parts = buffer.split("\n\n");
+    buffer = parts.pop() ?? "";
+    for (const part of parts) {
+      const line = part.trim();
+      if (line.startsWith("data: ")) onEvent(JSON.parse(line.slice(6)) as ChatEvent);
+    }
+  }
+}

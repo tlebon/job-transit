@@ -2,15 +2,18 @@
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from api.chat import Guide
 from api.cv import read_cv
 from api.engine import Engine, Profile
 
 app = FastAPI(title="Job Transit")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 engine = Engine()
+guide = None  # created on first chat, so the API starts without an Anthropic key
 
 
 class ProfileIn(BaseModel):
@@ -25,6 +28,7 @@ class ProfileIn(BaseModel):
     tools: list[str] = Field(default_factory=list)
     hobbies: str | None = None
     goals: list[str] = Field(default_factory=list)
+    experience_years: float | None = Field(default=None, ge=0, le=60)
 
 
 class RecommendIn(BaseModel):
@@ -141,3 +145,25 @@ def cv(body: CvIn):
         "activities": record.get("activities", []),
         "answers": answers,
     }
+
+
+class ChatMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(max_length=8000)
+
+
+class ChatIn(BaseModel):
+    messages: list[ChatMessage] = Field(min_length=1, max_length=40)
+    profile: ProfileIn
+    selected: int | None = None
+
+
+@app.post("/chat")
+def chat(body: ChatIn):
+    """The guide: streams server-sent events (see api/chat.py)."""
+    global guide
+    if guide is None:
+        guide = Guide(engine)
+    return StreamingResponse(
+        guide.stream([m.model_dump() for m in body.messages], Profile(**body.profile.model_dump()), body.selected),
+        media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
