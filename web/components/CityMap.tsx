@@ -113,6 +113,11 @@ export function CityMap({ city, stops, pins, path, selected, hovered, onSelect, 
     else h = w / ratio;
     w = Math.max(w, FULL.w / 4);
     h = w / ratio;
+    // Barely tighter than the whole city just looks like an accidental zoom: show the whole city instead.
+    if (w > FULL.w * 0.7) {
+      setView(FULL);
+      return;
+    }
     const cx = (Math.max(...xs) + Math.min(...xs)) / 2;
     const cy = (Math.max(...ys) + Math.min(...ys)) / 2;
     setView({ x: cx - w / 2, y: cy - h / 2, w: Math.min(w, FULL.w * 1.2), h: Math.min(h, FULL.h * 1.2) });

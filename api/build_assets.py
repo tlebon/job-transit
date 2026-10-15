@@ -5,6 +5,7 @@ data/derived, and writes everything the API needs into api/assets/. Run from the
 repo root after the notebooks:  uv run python api/build_assets.py
 """
 import json
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -205,13 +206,25 @@ census_areas.rename_axis("census").reset_index().to_parquet(OUT / "census-intere
 # t-SNE on the standardized census-level skill profiles (cosine). Compared with a 2-component PCA it keeps
 # far more of each occupation's real neighbours on the map (10 nearest neighbours kept: 58% vs 18%;
 # trustworthiness 0.975 vs 0.853), so nearby on the map means similar in skills.
+# The layout is frozen in data/derived/job-city-layout.parquet: t-SNE gives a different picture on another
+# machine (floating-point differences grow during optimisation, even with a fixed seed), and people learn
+# where things are on a map. Pass --relayout to recompute it, e.g. after the skill data changes.
 standardized = census_scaler.transform(census_ks)
-xy = TSNE(n_components=2, perplexity=30, metric="cosine", init="pca", random_state=0).fit_transform(standardized)
-xy = (xy - xy.min(axis=0)) / (xy.max(axis=0) - xy.min(axis=0))
-xy = xy * np.array([1000, 700])
-
 N_DISTRICTS = 14
-district_of = AgglomerativeClustering(n_clusters=N_DISTRICTS, linkage="ward").fit_predict(xy)
+LAYOUT_PATH = DERIVED / "job-city-layout.parquet"
+if LAYOUT_PATH.exists() and "--relayout" not in sys.argv:
+    layout = pd.read_parquet(LAYOUT_PATH).set_index("census").reindex(codes)
+    assert layout["x"].notna().all(), "layout is missing occupations: rerun with --relayout"
+    xy = layout[["x", "y"]].to_numpy(dtype=float)
+    district_of = layout["district"].to_numpy(dtype=int)
+else:
+    xy = TSNE(n_components=2, perplexity=30, metric="cosine", init="pca", random_state=0).fit_transform(standardized)
+    xy = (xy - xy.min(axis=0)) / (xy.max(axis=0) - xy.min(axis=0))
+    xy = xy * np.array([1000, 700])
+    district_of = AgglomerativeClustering(n_clusters=N_DISTRICTS, linkage="ward").fit_predict(xy)
+    pd.DataFrame({"census": codes, "x": xy[:, 0].round(1), "y": xy[:, 1].round(1), "district": district_of}).to_parquet(
+        LAYOUT_PATH, index=False)
+    print("new Job City layout written to", LAYOUT_PATH)
 
 # Each district is named after the items its occupations rate highest compared with everyone else.
 # Placeholder names: easy to change here.
