@@ -25,15 +25,19 @@ MIN_ANSWERS_FOR_RANK_MATCH = 4
 ENGINEERING_ITEM = "kn: Engineering and Technology"
 COMPUTERS_ITEM = "kn: Computers and Electronics"
 SOFTWARE_JOB_THRESHOLD = 4.0  # O*NET importance of Computers and Electronics for the job
+INTEREST_NUDGE_FLOOR = 0.5          # next steps: score = move share x (floor + interest fit, 0-1)
+INTEREST_NUDGE_FLOOR_PASSION = 0.25  # stronger nudge when someone wants 'room for something I love'
 SENIOR_BOOST = 1.2              # best-fit multiplier for jobs needing 5+ years, when you have them
 JUNIOR_PENALTY = 0.7            # ... and when you don't (still shown, just lower)
-# When someone gives a job title *and* describes their work, the title is a prior: every occupation gets a bonus
-# of TITLE_PRIOR_STRENGTH x its skill similarity to the title before the text placement's softmax. The text then
-# decides where in the title's neighbourhood you sit, and needs strong evidence to move you to a distant field.
-# notebooks/07_placement_eval: vs the old fixed 50/50 title/text mix, 0.5 keeps the right title first ~90% of the
-# time with more weight on it (0.86 vs 0.62-0.69), and lets the text fix a near-miss title about half the time
-# (the 50/50 mix never could). On 14 real survey descriptions: weight on the true job 0.28 -> 0.40.
-TITLE_PRIOR_STRENGTH = 0.5
+# When someone gives a job title *and* describes their work, the title keeps a fixed share of the placement and
+# the text places the rest. Inside the text's share the title is a prior: every occupation gets a bonus of
+# TITLE_PRIOR_STRENGTH x its skill similarity to the title before the softmax, so a stray phrase ("mentor juniors")
+# can't land you among teachers, while text pointing at a neighbouring field (data science for a web developer) or a
+# domain still counts. That keeps hybrid roles and domain signal, which a strong prior erased entirely.
+# notebooks/07_placement_eval: right title -> 0.85 of the weight on the true job (old plain 50/50: 0.62-0.69; prior
+# alone at strength 1: 0.96 but hybrids collapse onto the title). Small samples; revisit with more survey data.
+JOB_WEIGHT_WITH_TEXT = 0.5
+TITLE_PRIOR_STRENGTH = 0.25
 
 
 @dataclass
@@ -302,11 +306,8 @@ class Engine:
         from api.embeddings import split_statements
         described = []
         if profile.description:
-            try:
-                from api.cv import activities_from_text
-                described = list(activities_from_text(profile.description.strip()))
-            except Exception:  # no key, network or API error: use the text as written
-                described = split_statements(profile.description) or [profile.description]
+            # used as written: rewriting it with Haiku placed real survey descriptions worse (notebook 07)
+            described = split_statements(profile.description) or [profile.description.strip()]
         statements = list(profile.activities) + described
         if self.placer is None or not (statements or profile.tools):
             return None
@@ -327,12 +328,13 @@ class Engine:
 
         if has_job:
             origin, origin_kind = profile.job, "your job"
+            # the titles share a fixed part; the text (placed with the title prior) gets the rest
+            title_weight = JOB_WEIGHT_WITH_TEXT if placement else 1.0
+            combined = {self.position[j]: title_weight / len(titles) for j in titles}
             if placement:
-                # text placed within the title's neighbourhood (title prior); see TITLE_PRIOR_STRENGTH
-                stations, weights = np.asarray(placement["stations"]), np.asarray(placement["weights"])
-            else:
-                stations = np.array([self.position[j] for j in titles])
-                weights = np.full(len(titles), 1.0 / len(titles))
+                for st, w in zip(placement["stations"], placement["weights"]):
+                    combined[int(st)] = combined.get(int(st), 0.0) + (1 - title_weight) * w
+            stations, weights = np.array(list(combined)), np.array(list(combined.values()))
         elif placement:
             stations, weights = placement["stations"], placement["weights"]
             origin, origin_kind = int(self.codes[stations[0]]), "your work"
@@ -379,11 +381,16 @@ class Engine:
             frame["reach_label"] = np.select([frame["reach_rank"] <= 10, frame["reach_rank"] <= 50],
                                              ["Common move", "Occasional move"], "Rare move")
 
-        appeal_weight = 0.7 if "passion" in profile.goals else 0.5
+        # "Next steps": real moves decide, interests only nudge (notebooks/09_recommendation_audit). An interest
+        # match lifts a stop at most x1.5 and sinks it to x0.5 (x0.25-x1.25 with the "passion" goal), so it can move
+        # a few places but a rare move can't jump a common one. The old blend (reach^0.5 x interest^0.5) let interests
+        # pull teachers and physicians up from reach rank 30-100, where the move data is mostly noise.
+        # Interest-driven destinations get their own list: sort="appealing" ("Toward what you love").
+        nudge_floor = INTEREST_NUDGE_FLOOR_PASSION if "passion" in profile.goals else INTEREST_NUDGE_FLOOR
         if reach is not None and appeal is not None:
-            frame["best"] = frame["reach_score"] ** (1 - appeal_weight) * frame["appeal_pct"] ** appeal_weight
+            frame["best"] = frame["reach_share"] * (nudge_floor + frame["appeal_pct"])
         elif reach is not None:
-            frame["best"] = frame["reach_score"]
+            frame["best"] = frame["reach_share"]
         elif appeal is not None:
             frame["best"] = frame["appeal_pct"]
         else:
@@ -447,10 +454,11 @@ class Engine:
         if required not in ("5 years or more", "Less than 5 years") or years is None:
             return None
         need = 5 if required == "5 years or more" else 1
-        have = f"you have about {years:g}" if years < 30 else "you have plenty"
+        wants = "5+ years of related work experience" if need == 5 else "some related work experience (1 to 5 years)"
+        have = f"you have about {years:g} years" if years < 30 else "you have plenty"
         if years >= need:
-            return f"Usually needs {required.lower()} in a related job; {have}."
-        return f"Usually needs {required.lower()} in a related job; {have}, so this is more likely a later step."
+            return f"Usually needs {wants}; {have}."
+        return f"Usually needs {wants}; {have}, so this is more likely a later step."
 
     def item_label(self, key: str):
         item = next(i for i in self.meta["items"] if i["key"] == key)

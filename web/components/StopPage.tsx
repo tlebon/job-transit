@@ -142,13 +142,14 @@ export function StopPage({ stop, request, start, legs, schooling, hasEducation, 
               <dd>{stop.on_the_job_training}</dd>
             </div>
           )}
-          {stop.work_experience && stop.work_experience !== "None" && (
+          {stop.work_experience && stop.work_experience !== "None" && !details?.experience_note && (
             <div>
               <dt>Related experience</dt>
               <dd>{stop.work_experience}</dd>
             </div>
           )}
         </dl>
+        {details?.experience_note && <p>{details.experience_note}</p>}
         <p className="q-help">
           Rough guide: schooling{stop.entry_education ? ` (${EDUCATION_NOTE[stop.entry_education] ?? stop.entry_education})` : ""} beyond{" "}
           {hasEducation ? "yours" : "your current job’s"}, plus usual training.

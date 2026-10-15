@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Meta, Profile } from "@/lib/api";
 import { CvReader, type CvApply } from "./CvReader";
 import { ChipGroups } from "./ChipGroups";
+import { ExperiencePicker } from "./ExperiencePicker";
 import { GoalPicker } from "./GoalPicker";
 import { JobTitles, type Title } from "./JobTitles";
 
@@ -21,6 +22,8 @@ type Props = {
   onToggleGoal: (goal: string) => void;
   hasCv: boolean;
   onLoadFile: (file: File) => void;
+  experienceYears: number | null;
+  onExperience: (years: number | null) => void;
   onFinish: () => void;
 };
 
@@ -29,7 +32,7 @@ const STEPS = ["Your CV", "Your work", "Your interests", "Your map"];
 /** First-run flow: four skippable steps, then the map. */
 export function Onboarding({
   meta, profile, titles, description, onTitles, onDescription, onApplyCv, onToggleChip,
-  hobbies, onHobbies, onToggleGoal, hasCv, onLoadFile, onFinish,
+  hobbies, onHobbies, onToggleGoal, hasCv, onLoadFile, experienceYears, onExperience, onFinish,
 }: Props) {
   const [step, setStep] = useState(0);
   const [rereadCv, setRereadCv] = useState(false);
@@ -117,6 +120,10 @@ export function Onboarding({
                 onChange={(e) => onDescription(e.target.value)}
               />
             </label>
+            <div className="cv-row">
+              <span className="q-text">How much work experience do you have?</span>
+              <ExperiencePicker years={experienceYears} onChange={onExperience} />
+            </div>
           </section>
         )}
 

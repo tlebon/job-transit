@@ -12,10 +12,10 @@ type Props = {
   onHover: (census: number | null) => void;
 };
 
+// "Next steps": real moves, nudged by interests and goals. "Toward what you love": interest matches, often bigger jumps.
 const SORTS: { key: SortKey; label: string }[] = [
-  { key: "best", label: "Best fit" },
-  { key: "reachable", label: "Reachable" },
-  { key: "appealing", label: "Appealing" },
+  { key: "best", label: "Next steps" },
+  { key: "appealing", label: "Toward what you love" },
 ];
 
 export function StopList({ pins, sort, onSort, selected, onSelect, onHover }: Props) {
