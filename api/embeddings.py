@@ -95,7 +95,8 @@ class Placer:
                 matched.append(name)
         return votes, matched
 
-    def place(self, statements: list[str], tools: list[str] | None = None, k: int = 5):
+    def place(self, statements: list[str], tools: list[str] | None = None, k: int = 5,
+              prior: np.ndarray | None = None, prior_strength: float = 0.0):
         statements = [s for s in statements if s.strip()][:40]
         text_votes = np.zeros(self.n)
         evidence = []
@@ -111,7 +112,10 @@ class Placer:
             onet_score = scores.mean(axis=0)
             census_score = np.full(self.n, -np.inf)
             np.maximum.at(census_score, self.group_rows, onet_score)      # best O*NET member per census code
-            weights = np.where(np.isfinite(census_score), np.exp((census_score - onet_score.max()) / TEMPERATURE), 0.0)
+            if prior is not None:                                         # title prior: bonus near the title
+                census_score = census_score + prior_strength * np.nan_to_num(prior)
+            finite = np.isfinite(census_score)
+            weights = np.where(finite, np.exp((census_score - census_score[finite].max()) / TEMPERATURE), 0.0)
             text_votes = weights / weights.sum()
             self._sims = sims
 

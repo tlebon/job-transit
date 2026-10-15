@@ -25,7 +25,15 @@ MIN_ANSWERS_FOR_RANK_MATCH = 4
 ENGINEERING_ITEM = "kn: Engineering and Technology"
 COMPUTERS_ITEM = "kn: Computers and Electronics"
 SOFTWARE_JOB_THRESHOLD = 4.0  # O*NET importance of Computers and Electronics for the job
-JOB_WEIGHT_WITH_TEXT = 0.5     # when someone gives a job *and* describes their work, how much the title counts
+SENIOR_BOOST = 1.2              # best-fit multiplier for jobs needing 5+ years, when you have them
+JUNIOR_PENALTY = 0.7            # ... and when you don't (still shown, just lower)
+# When someone gives a job title *and* describes their work, the title is a prior: every occupation gets a bonus
+# of TITLE_PRIOR_STRENGTH x its skill similarity to the title before the text placement's softmax. The text then
+# decides where in the title's neighbourhood you sit, and needs strong evidence to move you to a distant field.
+# notebooks/07_placement_eval: vs the old fixed 50/50 title/text mix, 0.5 keeps the right title first ~90% of the
+# time with more weight on it (0.86 vs 0.62-0.69), and lets the text fix a near-miss title about half the time
+# (the 50/50 mix never could). On 14 real survey descriptions: weight on the true job 0.28 -> 0.40.
+TITLE_PRIOR_STRENGTH = 0.5
 
 
 @dataclass
@@ -42,6 +50,7 @@ class Profile:
     tools: list[str] = field(default_factory=list)           # software / tools they use
     hobbies: str | None = None                               # free text: what they do for fun
     goals: list[str] = field(default_factory=list)           # pay, stability, less_ai, passion
+    experience_years: float | None = None                    # years of work experience (CV or self-reported)
 
 
 class Engine:
@@ -287,8 +296,9 @@ class Engine:
             similarity += weight * station_similarity
         return reach, similarity, vector
 
-    def place(self, profile: Profile):
-        """Weighted occupations from what the person does (statements + tools), or None."""
+    def place(self, profile: Profile, prior: np.ndarray | None = None):
+        """Weighted occupations from what the person does (statements + tools), or None.
+        `prior`: per-occupation similarity to the person's job title(s), see TITLE_PRIOR_STRENGTH."""
         from api.embeddings import split_statements
         described = []
         if profile.description:
@@ -300,24 +310,29 @@ class Engine:
         statements = list(profile.activities) + described
         if self.placer is None or not (statements or profile.tools):
             return None
-        return self.placer.place(statements, profile.tools)
+        return self.placer.place(statements, profile.tools, prior=prior, prior_strength=TITLE_PRIOR_STRENGTH)
 
     def start(self, profile: Profile):
         """Where the person starts: weighted stations, plus everything derived from them."""
         answered = {k: v for k, v in profile.answers.items() if k in self.item_position}
-        placement = self.place(profile)
+        has_job = profile.job is not None and profile.job in self.position
+        # several titles can describe one job (e.g. engineering manager + developer)
+        titles = list(dict.fromkeys([profile.job] + [j for j in profile.extra_jobs if j in self.position])) if has_job else []
+        prior = None
+        if titles:
+            rows = [self.position[j] for j in titles]
+            prior = (self.census_skills_unit @ self.census_skills_unit[rows].T).max(axis=1)   # closest of the titles
+        placement = self.place(profile, prior)
         origin, origin_kind, stations, weights, known = None, None, None, None, True
 
-        if profile.job is not None and profile.job in self.position:
+        if has_job:
             origin, origin_kind = profile.job, "your job"
-            # several titles can describe one job (e.g. engineering manager + developer); they share the weight
-            titles = list(dict.fromkeys([profile.job] + [j for j in profile.extra_jobs if j in self.position]))
-            title_weight = JOB_WEIGHT_WITH_TEXT if placement else 1.0
-            combined = {self.position[j]: title_weight / len(titles) for j in titles}
             if placement:
-                for st, w in zip(placement["stations"], placement["weights"]):
-                    combined[int(st)] = combined.get(int(st), 0.0) + (1 - JOB_WEIGHT_WITH_TEXT) * w
-            stations, weights = np.array(list(combined)), np.array(list(combined.values()))
+                # text placed within the title's neighbourhood (title prior); see TITLE_PRIOR_STRENGTH
+                stations, weights = np.asarray(placement["stations"]), np.asarray(placement["weights"])
+            else:
+                stations = np.array([self.position[j] for j in titles])
+                weights = np.full(len(titles), 1.0 / len(titles))
         elif placement:
             stations, weights = placement["stations"], placement["weights"]
             origin, origin_kind = int(self.codes[stations[0]]), "your work"
@@ -375,6 +390,7 @@ class Engine:
             frame["best"] = None
         if frame["best"].notna().any():
             frame["best"] = frame["best"] * self.goal_factor(frame, profile.goals)
+            frame["best"] = frame["best"] * self.experience_factor(frame, profile.experience_years)
         order_by = {"best": "best", "reachable": "reach_share", "appealing": "appeal_pct"}.get(sort, "best")
         if order_by not in frame or frame[order_by].isna().all():
             order_by = "best"
@@ -414,6 +430,28 @@ class Engine:
                 factor *= (0.6 + 0.8 * signals[goal]).fillna(1.0)
         return factor
 
+    @staticmethod
+    def experience_factor(frame: pd.DataFrame, years: float | None):
+        """BLS lists the related work experience a job usually needs (none, under 5 years, 5 years or more).
+        Jobs needing 5+ years (mostly management) move up for people who have it and down for people who don't.
+        Our transition data has no seniority, so this is the one place career stage enters the ranking."""
+        factor = pd.Series(1.0, index=frame.index)
+        if years is None:
+            return factor
+        needs_five = frame["work_experience"] == "5 years or more"
+        factor[needs_five] = SENIOR_BOOST if years >= 5 else JUNIOR_PENALTY
+        return factor
+
+    @staticmethod
+    def experience_note(required: str | None, years: float | None):
+        if required not in ("5 years or more", "Less than 5 years") or years is None:
+            return None
+        need = 5 if required == "5 years or more" else 1
+        have = f"you have about {years:g}" if years < 30 else "you have plenty"
+        if years >= need:
+            return f"Usually needs {required.lower()} in a related job; {have}."
+        return f"Usually needs {required.lower()} in a related job; {have}, so this is more likely a later step."
+
     def item_label(self, key: str):
         item = next(i for i in self.meta["items"] if i["key"] == key)
         return item.get("label") or (f"Knowledge of {item['name']}" if item["kind"] == "knowledge" else item["name"])
@@ -451,6 +489,9 @@ class Engine:
             if pd.notna(here["median_wage"]) and pd.notna(there["median_wage"]):
                 out["pay_change_pct"] = round(float(there["median_wage"] / here["median_wage"] - 1) * 100, 1)
             out["from_occupation"] = self.occupation(st["origin"])
+        note = self.experience_note(self.census.at[code, "work_experience"], profile.experience_years)
+        if note:
+            out["experience_note"] = note
         return out
 
 
@@ -462,8 +503,15 @@ ABBREVIATIONS = {
 }
 
 
+# Seniority words say how senior, not which job, and pulled matches off ("senior software engineer" landed on
+# network architects). Only unambiguous ones: "lead", "staff" and "principal" are jobs on their own too.
+SENIORITY_WORDS = {"senior", "sr", "junior", "jr", "ii", "iii", "iv"}
+
+
 def _expand_abbreviations(query: str) -> str:
-    return " ".join(ABBREVIATIONS.get(word, word) for word in query.lower().split())
+    words = [w.strip(".,") for w in query.lower().split()]
+    kept = [w for w in words if w not in SENIORITY_WORDS] or words
+    return " ".join(ABBREVIATIONS.get(word, word) for word in kept)
 
 
 def _title_score(query, title, **kwargs):
