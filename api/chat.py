@@ -41,6 +41,12 @@ consultant) only exist inside broad census groups; pay and growth are US figures
 - find_openings searches live job boards (Adzuna, 80,000 Hours, Arbeitnow, AI company boards) for one occupation. \
 Show a few concrete postings with their links; say which sources were unavailable. Use the person's city unless they \
 ask about another place.
+- When they ask for a plan for a move: call stop_details for that stop first, then save_plan with 3 to 6 steps. \
+Steps must be concrete and specific to this person and this job: name the actual skills from the gaps and tasks, \
+what to build or learn and how to show it, who to talk to, and when to start applying. Give each step a realistic \
+week to aim for. Prefer steps they can start this week. After saving, say in one or two sentences that the plan is \
+in their plan panel, where they can tick steps off and add reminders to their calendar; don't repeat every step. \
+If they ask to change the plan, call save_plan again with the whole revised plan.
 - Occupations are identified by census codes; get them from search_jobs or recommend, never guess them.
 
 The person's current situation:
@@ -91,6 +97,32 @@ TOOLS = [
         },
     },
     {
+        "name": "save_plan",
+        "description": ("App action: save a step-by-step plan for moving to one occupation. It appears in the app as a "
+                        "to-do list with dates, replacing any earlier plan."),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "census": {"type": "integer", "description": "The destination's census code."},
+                "summary": {"type": "string", "description": "One sentence: the move and the main thing to close."},
+                "steps": {
+                    "type": "array", "minItems": 2, "maxItems": 8,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string", "description": "Short imperative, under 60 characters."},
+                            "detail": {"type": "string", "description": "One or two concrete sentences."},
+                            "week": {"type": "integer", "minimum": 1, "maximum": 52,
+                                     "description": "Week from now to aim to finish it by."},
+                        },
+                        "required": ["title", "detail", "week"],
+                    },
+                },
+            },
+            "required": ["census", "summary", "steps"],
+        },
+    },
+    {
         "name": "open_stop",
         "description": "App action: open a destination's stop page on the map so the person can see it.",
         "input_schema": {"type": "object", "properties": {"census": {"type": "integer"}}, "required": ["census"]},
@@ -117,6 +149,7 @@ TOOL_LABELS = {
     "recommend": lambda a: "Ranking next stops" + (" with different settings" if a else ""),
     "stop_details": lambda a: "Looking up a stop",
     "find_openings": lambda a: "Searching job boards" + (f" in {a['city']}" if a.get("city") else ""),
+    "save_plan": lambda a: "Saving your plan",
     "open_stop": lambda a: "Opening the stop on the map",
     "update_profile": lambda a: "Updating your profile",
 }
@@ -138,7 +171,7 @@ class Guide:
         self.client = anthropic.Anthropic()
 
     # ---- context and tools -----------------------------------------------------------------
-    def context(self, profile: Profile, selected: int | None, location: dict | None = None) -> str:
+    def context(self, profile: Profile, selected: int | None, location: dict | None = None, plan: dict | None = None) -> str:
         e = self.engine
         lines = []
         if profile.job is not None and profile.job in e.position:
@@ -167,6 +200,9 @@ class Guide:
                     f"{r['title']} (census {r['census']}, {r.get('reach_label', '')})" for r in rec["results"][:8]))
         except Exception as error:  # the chat still works without the summary
             lines.append(f"(Couldn't compute recommendations: {error})")
+        if plan and plan.get("steps"):
+            steps = "; ".join(f"{'[done] ' if st.get('done') else ''}{st.get('title', '')}" for st in plan["steps"][:8])
+            lines.append(f"Their saved plan, toward {plan.get('occupation', '?')} (census {plan.get('census')}): {steps}")
         if location:
             lines.append(f"Looking for work in: {location['city']} ({location['country']})")
         if selected is not None and selected in e.position:
@@ -206,6 +242,18 @@ class Guide:
             for p in found["openings"]:
                 p.pop("near", None)
             return found, None
+        if name == "save_plan":
+            code = args.get("census")
+            if code not in e.position:
+                return {"error": "unknown census code; use search_jobs"}, None
+            steps = [{"title": str(st.get("title", ""))[:80], "detail": str(st.get("detail", ""))[:400],
+                      "week": max(1, min(52, int(st.get("week") or 1)))}
+                     for st in (args.get("steps") or [])[:8] if st.get("title")]
+            if len(steps) < 2:
+                return {"error": "a plan needs at least 2 steps"}, None
+            return {"ok": True, "saved_steps": len(steps)}, {
+                "type": "save_plan", "census": code, "occupation": e.census.at[code, "title"],
+                "summary": str(args.get("summary", ""))[:300], "steps": steps}
         if name == "open_stop":
             code = args.get("census")
             if code not in e.position:
@@ -221,16 +269,17 @@ class Guide:
         return {"error": f"unknown tool {name}"}, None
 
     # ---- the conversation ------------------------------------------------------------------
-    def stream(self, messages: list[dict], profile: Profile, selected: int | None = None, location: dict | None = None):
+    def stream(self, messages: list[dict], profile: Profile, selected: int | None = None, location: dict | None = None,
+               plan: dict | None = None):
         """Yields server-sent-event lines. `messages`: [{role: user|assistant, content: str}]."""
         def event(payload):
             return f"data: {_json(payload)}\n\n"
 
         try:
-            system = SYSTEM.format(context=self.context(profile, selected, location))
+            system = SYSTEM.format(context=self.context(profile, selected, location, plan))
             convo = [{"role": m["role"], "content": m["content"]} for m in messages if m.get("content")]
             for _ in range(MAX_TOOL_ROUNDS):
-                with self.client.messages.stream(model=CHAT_MODEL, max_tokens=1500, system=system,
+                with self.client.messages.stream(model=CHAT_MODEL, max_tokens=2500, system=system,
                                                  tools=TOOLS, messages=convo) as stream:
                     for text in stream.text_stream:
                         yield event({"type": "text", "text": text})

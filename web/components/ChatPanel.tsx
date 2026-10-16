@@ -2,6 +2,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { loadLocation } from "@/lib/location";
+import type { Plan } from "@/lib/plan";
 import { streamChat, type ChatAction, type ChatMessage, type Profile } from "@/lib/api";
 import { Markdown } from "./Markdown";
 
@@ -22,10 +23,11 @@ type Props = {
   onAction: (action: ChatAction) => void;
   pendingQuestion?: string | null; // asked from the map's ask bar; sent once on arrival
   onPendingSent?: () => void;
+  plan?: Plan | null; // sent along so the guide can discuss and revise it
 };
 
 /** The guide: a chat grounded in the planner's data, which can also open stops and update the profile. */
-export function ChatPanel({ turns, setTurns, profile, selected, onAction, pendingQuestion, onPendingSent }: Props) {
+export function ChatPanel({ turns, setTurns, profile, selected, onAction, pendingQuestion, onPendingSent, plan }: Props) {
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const controller = useRef<AbortController | null>(null);
@@ -72,7 +74,7 @@ export function ChatPanel({ turns, setTurns, profile, selected, onAction, pendin
     let afterTool = false;
     try {
       await streamChat(
-        { messages: history.filter((m) => m.content), profile, selected, location: loadLocation() },
+        { messages: history.filter((m) => m.content), profile, selected, location: loadLocation(), plan },
         (event) => {
           if (event.type === "text") {
             const gap = afterTool ? "\n\n" : "";

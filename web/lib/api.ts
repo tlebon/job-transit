@@ -1,3 +1,5 @@
+import type { Plan, PlanAction } from "./plan";
+
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export type Item = { key: string; kind: "knowledge" | "skill"; name: string; label: string | null; description: string; core: boolean };
@@ -145,7 +147,8 @@ export type Openings = {
   search_terms: string[];
   city: string;
   country: string;
-  sources: Record<string, number | string>; // count found, or "unavailable: ..."
+  sources: Record<string, number | string>; // matched postings, or "unavailable: ..."
+  updated?: Record<string, string>; // ISO time each source's postings were fetched
   openings: Opening[];
   total_matched: number;
 };
@@ -203,6 +206,7 @@ export const EMPTY_PROFILE: Profile = {
 export type ChatMessage = { role: "user" | "assistant"; content: string };
 export type ChatAction =
   | { type: "open_stop"; census: number }
+  | PlanAction
   | {
       type: "update_profile";
       goals?: string[];
@@ -220,7 +224,13 @@ export type ChatEvent =
 
 /** Streams the guide's reply (server-sent events) and calls onEvent for each event. */
 export async function streamChat(
-  body: { messages: ChatMessage[]; profile: Profile; selected: number | null; location?: { city: string; country: string } },
+  body: {
+    messages: ChatMessage[];
+    profile: Profile;
+    selected: number | null;
+    location?: { city: string; country: string };
+    plan?: Plan | null;
+  },
   onEvent: (event: ChatEvent) => void,
   signal?: AbortSignal,
 ) {

@@ -10,12 +10,11 @@ import { formatYears, hopYears } from "@/lib/travel";
 
 type Props = {
   stop: Stop;
-  request: Profile; // the profile the results were computed for (job = last stop of the trip)
+  request: Profile; // the profile the results were computed for
   start: Occupation;
-  legs: Occupation[];
   schooling: number;
   hasEducation: boolean;
-  onContinue: () => void;
+  onPlan: () => void;
   onClose: () => void;
 };
 
@@ -30,7 +29,7 @@ const EDUCATION_NOTE: Record<string, string> = {
   "No formal educational credential": "no formal credential",
 };
 
-export function StopPage({ stop, request, start, legs, schooling, hasEducation, onContinue, onClose }: Props) {
+export function StopPage({ stop, request, start, schooling, hasEducation, onPlan, onClose }: Props) {
   const [details, setDetails] = useState<StopDetails | null>(null);
   useEffect(() => {
     const controller = new AbortController();
@@ -40,7 +39,7 @@ export function StopPage({ stop, request, start, legs, schooling, hasEducation, 
   }, [stop.census, request]);
 
   const line = lineOf(stop.family);
-  const route = [...legs, stop];
+  const route = [stop];
   let years = 0;
   let school = schooling;
   for (const leg of route) {
@@ -207,10 +206,10 @@ export function StopPage({ stop, request, start, legs, schooling, hasEducation, 
       <Openings census={stop.census} />
 
       <div className="route-actions">
-        <button type="button" className="action" onClick={onContinue}>
-          Continue from here
+        <button type="button" className="action" onClick={onPlan}>
+          Plan this move
         </button>
-        <span className="q-help">See where you could go after this stop.</span>
+        <span className="q-help">The guide drafts concrete steps you can tick off, with reminders for your calendar.</span>
       </div>
     </article>
   );

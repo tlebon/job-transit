@@ -313,6 +313,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .chat-user { align-self: flex-end; max-width: 85%; background: var(--paper); border: 1px solid var(--rule); border-radius: var(--radius-m); padding: 8px 12px; }
 .chat-user p { margin: 0; }
 .chat-assistant { max-width: 100%; }
+.chat-turn a { color: inherit; text-decoration: underline; text-underline-offset: 2px; overflow-wrap: anywhere; }
 .chat-status { color: var(--ink-3); font-size: 13px; font-style: italic; }
 .md-heading { font-weight: 700; }
 .md-table { overflow-x: auto; margin: 0 0 10px; }
@@ -463,3 +464,23 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .opening-title:hover { text-decoration: underline; }
 .opening-meta { color: var(--ink-2); font-size: 14px; }
 .opening-meta .sep { margin: 0 0.4em; }
+
+/* the saved plan (Plan this move) */
+.plan { border: 1px solid var(--rule); border-radius: var(--radius-m); background: var(--paper); padding: 10px 14px; margin: 0 0 14px; }
+.plan-head { display: grid; grid-template-columns: 1fr auto; gap: 0 12px; cursor: pointer; list-style: none; }
+.plan-head::-webkit-details-marker { display: none; }
+.plan-label { grid-column: 1; color: var(--ink-2); font-size: 13px; }
+.plan-title { grid-column: 1; font-weight: 800; font-size: 17px; }
+.plan-progress { grid-column: 2; grid-row: 1 / span 2; align-self: center; color: var(--ink-2); font-size: 14px; white-space: nowrap; }
+.plan-summary { margin: 8px 0 4px; color: var(--ink-2); font-size: 14px; }
+.plan-steps { list-style: none; margin: 6px 0 0; padding: 0; }
+.plan-steps li { border-top: 1px solid var(--rule-soft); }
+.plan-steps label { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 8px; padding: 9px 0; cursor: pointer; }
+.plan-steps input { width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--ink); }
+.plan-step { display: flex; flex-direction: column; gap: 2px; }
+.plan-step-title { font-weight: 700; }
+.plan-step-detail { color: var(--ink-2); font-size: 14px; }
+.plan-step-due { color: var(--ink-3); font-size: 13px; }
+.plan-steps li[data-done="true"] .plan-step-title { text-decoration: line-through; color: var(--ink-3); }
+.plan-steps li[data-done="true"] .plan-step-detail { display: none; }
+.plan-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding-top: 10px; border-top: 1px solid var(--rule-soft); }

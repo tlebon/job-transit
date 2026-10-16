@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { Board, type Trip } from "@/components/Board";
+import { useEffect, useState } from "react";
+import { Board } from "@/components/Board";
+import { PlanCard } from "@/components/PlanCard";
 import { CvReader, type CvApply } from "@/components/CvReader";
 import { JobTitles, type Title } from "@/components/JobTitles";
 import { Leg } from "@/components/Leg";
@@ -24,6 +25,7 @@ import {
   type SortKey,
 } from "@/lib/api";
 import { educationYears } from "@/lib/travel";
+import { loadPlan, planFromAction, savePlan, type Plan } from "@/lib/plan";
 
 const STORAGE_KEY = "job-transit-profile-v1";
 const ONBOARDED_KEY = "job-transit-onboarded-v1";
@@ -64,7 +66,12 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [city, setCity] = useState<CityMap | null>(null);
-  const [trip, setTrip] = useState<Trip | null>(null);
+  const [plan, setPlanState] = useState<Plan | null>(null);
+  useEffect(() => setPlanState(loadPlan()), []);
+  const setPlan = (next: Plan | null) => {
+    setPlanState(next);
+    savePlan(next);
+  };
   const [onboarding, setOnboarding] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
@@ -98,9 +105,8 @@ export default function Home() {
     const controller = new AbortController();
     const timer = setTimeout(() => {
       setLoading(true);
-      const body = trip ? { ...profile, job: trip.legs[trip.legs.length - 1].census, extra_jobs: [] } : profile;
       api
-        .recommend(body, sort, controller.signal)
+        .recommend(profile, sort, controller.signal)
         .then((d) => {
           setData(d);
           setError(null);
@@ -114,10 +120,7 @@ export default function Home() {
       clearTimeout(timer);
       controller.abort();
     };
-  }, [profile, sort, jobLabel, trip, cv]);
-
-  // a new starting job starts a new trip
-  useEffect(() => setTrip(null), [profile.job, profile.extra_jobs]);
+  }, [profile, sort, jobLabel, cv]);
 
   const update = (patch: Partial<Profile>) => setProfile((p) => ({ ...p, ...patch }));
   // typing shouldn't fire a request per keystroke: keep the draft locally, commit after a pause
@@ -197,8 +200,11 @@ export default function Home() {
   const [viewing, setViewing] = useState<number | null>(null);
   const [focus, setFocus] = useState<{ census: number; at: number } | null>(null);
   const onChatAction = (action: ChatAction) => {
+    if (action.type === "save_plan") {
+      setPlan(planFromAction(action, plan));
+      return;
+    }
     if (action.type === "open_stop") {
-      setTrip(null);
       setFocus({ census: action.census, at: Date.now() });
       return;
     }
@@ -259,7 +265,6 @@ export default function Home() {
       setCv(saved.cv ?? null);
       setHobbiesDraft(null);
       setDescriptionDraft(null);
-      setTrip(null);
       finishOnboarding();
     } catch (e) {
       setFileError(`Couldn’t load that file: ${e instanceof Error ? e.message : "unreadable"}.`);
@@ -272,16 +277,18 @@ export default function Home() {
     setExtraLabels({});
     setCv(null);
     setHobbiesDraft(null);
-    setTrip(null);
     setDescriptionDraft(null);
+    setPlan(null);
     setDrawerOpen(false);
     setOnboarding(true);
   };
 
-  const request = useMemo(
-    () => (trip ? { ...profile, job: trip.legs[trip.legs.length - 1].census, extra_jobs: [] } : profile),
-    [profile, trip],
-  );
+  const request = profile;
+  const planMove = (stop: { census: number; title: string }) => {
+    setFocus({ census: stop.census, at: Date.now() });
+    setPendingQuestion(`Make me a plan for moving to “${stop.title}”.`);
+    setChatMode(true);
+  };
 
   return (
     <>
@@ -480,6 +487,7 @@ export default function Home() {
             onAction={onChatAction}
             pendingQuestion={pendingQuestion}
             onPendingSent={() => setPendingQuestion(null)}
+            plan={plan}
           />
         )}
         <Board
@@ -489,17 +497,21 @@ export default function Home() {
           sort={sort}
           onSort={setSort}
           error={error}
-          trip={trip}
           schooling={educationYears(profile.education)}
           request={request}
-          onContinue={(stop) => {
-            if (!data?.origin) return;
-            setTrip((t) => (t ? { ...t, legs: [...t.legs, stop] } : { start: data.origin!, legs: [stop] }));
-          }}
-          onBack={() => setTrip((t) => (t && t.legs.length > 1 ? { ...t, legs: t.legs.slice(0, -1) } : null))}
+          onPlan={planMove}
           focus={focus}
           onSelectedChange={setViewing}
-        />
+        >
+          {plan && (
+            <PlanCard
+              plan={plan}
+              onToggle={(id) => setPlan({ ...plan, steps: plan.steps.map((s) => (s.id === id ? { ...s, done: !s.done } : s)) })}
+              onRemove={() => setPlan(null)}
+              onOpenStop={(census) => setFocus({ census, at: Date.now() })}
+            />
+          )}
+        </Board>
       </main>
       {!chatMode && !onboarding && <AskBar onAsk={askFromMap} />}
     </>

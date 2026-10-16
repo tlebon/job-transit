@@ -1,13 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { CityMap as CityMapData, Occupation, Profile, Recommendation, SortKey, Stop } from "@/lib/api";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import type { CityMap as CityMapData, Profile, Recommendation, SortKey, Stop } from "@/lib/api";
 import { CityMap } from "./CityMap";
 import { OriginCard } from "./OriginCard";
 import { StopList } from "./StopList";
 import { StopPage } from "./StopPage";
-
-export type Trip = { start: Occupation; legs: Occupation[] };
 
 type Props = {
   city: CityMapData | null;
@@ -15,11 +13,10 @@ type Props = {
   sort: SortKey;
   onSort: (sort: SortKey) => void;
   error: string | null;
-  trip: Trip | null;
   schooling: number | null;
   request: Profile;
-  onContinue: (stop: Stop) => void;
-  onBack: () => void;
+  onPlan: (stop: Stop) => void;
+  children?: ReactNode; // shown under the header (the saved plan)
   focus?: { census: number; at: number } | null; // ask the board to open a stop (e.g. from the guide)
   onSelectedChange?: (census: number | null) => void;
   compact?: boolean; // beside the chat: small map on top (expandable), stop pages below
@@ -27,7 +24,7 @@ type Props = {
 
 const PIN_COUNT = 10;
 
-export function Board({ city, data, sort, onSort, error, trip, schooling, request, onContinue, onBack, focus, onSelectedChange, compact }: Props) {
+export function Board({ city, data, sort, onSort, error, schooling, request, onPlan, focus, onSelectedChange, compact, children }: Props) {
   const [selected, setSelected] = useState<number | null>(null);
   const [mapExpanded, setMapExpanded] = useState(false);
   useEffect(() => {
@@ -47,13 +44,10 @@ export function Board({ city, data, sort, onSort, error, trip, schooling, reques
   const stops = useMemo(() => new Map((data?.results ?? []).map((s) => [s.census, s])), [data]);
   const pins = useMemo(() => (data?.results ?? []).slice(0, PIN_COUNT), [data]);
   const origin = data?.origin ?? null;
-  const start = trip?.start ?? origin;
-  const path = useMemo(
-    () => (start ? [start.census, ...(trip?.legs.map((l) => l.census) ?? [])] : []),
-    [start, trip],
-  );
+  const start = origin;
+  const path = useMemo(() => (start ? [start.census] : []), [start]);
 
-  const currentCode = trip ? trip.legs[trip.legs.length - 1].census : origin?.census ?? null;
+  const currentCode = origin?.census ?? null;
   useEffect(() => {
     if (selected !== null && selected !== currentCode && !stops.has(selected)) setSelected(null);
   }, [stops, selected, currentCode]);
@@ -75,9 +69,7 @@ export function Board({ city, data, sort, onSort, error, trip, schooling, reques
         <div className="board-head-top">
           <div>
             <div className="here-label">
-              {trip
-                ? "Your route so far"
-                : origin?.kind === "your job"
+              {origin?.kind === "your job"
                   ? "You are here"
                   : origin?.kind === "your work"
                     ? "Closest to your work"
@@ -86,16 +78,12 @@ export function Board({ city, data, sort, onSort, error, trip, schooling, reques
                       : "Job City"}
             </div>
             <h1 className="here">
-              {trip
-                ? [trip.start, ...trip.legs].map((o) => o.title).join(" → ")
-                : origin
-                  ? origin.title
-                  : "Where to next?"}
+              {origin ? origin.title : "Where to next?"}
             </h1>
           </div>
           {data && <Signal confidence={data.confidence} />}
         </div>
-        {!trip && data && (showMix || data.evidence.length > 0 || data.hobby_areas.length > 0) && (
+        {data && (showMix || data.evidence.length > 0 || data.hobby_areas.length > 0) && (
           <details className="evidence">
             <summary>How we placed you</summary>
             {showMix && origin && (
@@ -121,19 +109,15 @@ export function Board({ city, data, sort, onSort, error, trip, schooling, reques
             {data.hobby_areas.length > 0 && <p>From your hobbies: {data.hobby_areas.join(", ")}.</p>}
           </details>
         )}
-        {!trip && origin?.kind === "nearest station" && (
+        {origin?.kind === "nearest station" && (
           <p className="near-note">
             {origin.nearby.length ? `Also close to ${origin.nearby.slice(0, 2).join(" and ")}. ` : ""}
             Add your job or CV for routes based on real moves.
           </p>
         )}
-        {trip && (
-          <button type="button" className="linkish" onClick={onBack}>
-            Back one stop
-          </button>
-        )}
         {error && <p className="error">Couldn’t reach the planner: {error}. Check that the API is running.</p>}
       </div>
+      {children}
 
       <div className={compact ? "board-body" : selected !== null ? "board-body board-body-wide" : "board-body"}>
         <div className={mapExpanded ? "map-slot map-expanded" : "map-slot"}>
@@ -161,7 +145,7 @@ export function Board({ city, data, sort, onSort, error, trip, schooling, reques
         <aside className="side" ref={side}>
           {selected !== null && selected === currentCode && start ? (
             <OriginCard
-              origin={trip ? trip.legs[trip.legs.length - 1] : start}
+              origin={start}
               request={request}
               stops={data?.results ?? []}
               onSelect={setSelected}
@@ -172,14 +156,10 @@ export function Board({ city, data, sort, onSort, error, trip, schooling, reques
               stop={selectedStop}
               request={request}
               start={start}
-              legs={trip?.legs ?? []}
               schooling={baseSchooling}
               hasEducation={schooling !== null}
               onClose={() => setSelected(null)}
-              onContinue={() => {
-                onContinue(selectedStop);
-                setSelected(null);
-              }}
+              onPlan={() => onPlan(selectedStop)}
             />
           ) : pins.length ? (
             <StopList pins={pins} sort={sort} onSort={onSort} selected={selected} onSelect={setSelected} onHover={setHovered} />
