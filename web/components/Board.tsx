@@ -22,12 +22,20 @@ type Props = {
   onBack: () => void;
   focus?: { census: number; at: number } | null; // ask the board to open a stop (e.g. from the guide)
   onSelectedChange?: (census: number | null) => void;
+  compact?: boolean; // beside the chat: small map on top (expandable), stop pages below
 };
 
 const PIN_COUNT = 10;
 
-export function Board({ city, data, sort, onSort, error, trip, schooling, request, onContinue, onBack, focus, onSelectedChange }: Props) {
+export function Board({ city, data, sort, onSort, error, trip, schooling, request, onContinue, onBack, focus, onSelectedChange, compact }: Props) {
   const [selected, setSelected] = useState<number | null>(null);
+  const [mapExpanded, setMapExpanded] = useState(false);
+  useEffect(() => {
+    if (!mapExpanded) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setMapExpanded(false);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [mapExpanded]);
   useEffect(() => {
     if (focus) setSelected(focus.census);
   }, [focus]);
@@ -62,7 +70,7 @@ export function Board({ city, data, sort, onSort, error, trip, schooling, reques
   const baseSchooling = schooling ?? yearsFor(start?.entry_education) ?? 4;
 
   return (
-    <section className="board">
+    <section className={compact ? "board board-compact" : "board"}>
       <div className="board-head">
         <div className="board-head-top">
           <div>
@@ -127,7 +135,13 @@ export function Board({ city, data, sort, onSort, error, trip, schooling, reques
         {error && <p className="error">Couldn’t reach the planner: {error}. Check that the API is running.</p>}
       </div>
 
-      <div className={selected !== null ? "board-body board-body-wide" : "board-body"}>
+      <div className={compact ? "board-body" : selected !== null ? "board-body board-body-wide" : "board-body"}>
+        <div className={mapExpanded ? "map-slot map-expanded" : "map-slot"}>
+        {compact && (
+          <button type="button" className="map-toggle top-button" onClick={() => setMapExpanded(!mapExpanded)}>
+            {mapExpanded ? "Close map" : "Expand map"}
+          </button>
+        )}
         {city ? (
           <CityMap
             city={city}
@@ -143,6 +157,7 @@ export function Board({ city, data, sort, onSort, error, trip, schooling, reques
         ) : (
           <div className="city city-loading">Loading the map…</div>
         )}
+        </div>
         <aside className="side" ref={side}>
           {selected !== null && selected === currentCode && start ? (
             <OriginCard

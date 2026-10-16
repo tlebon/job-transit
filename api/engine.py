@@ -471,7 +471,7 @@ class Engine:
         info = self.details.get(str(code), {})
         out = {"occupation": self.occupation(code), **info}
 
-        if st["reach"] is not None:
+        if st["reach"] is not None and code not in profile.extra_jobs:   # one of your own titles isn't a "move"
             reach = st["reach"].copy()
             ranks = pd.Series(reach).rank(ascending=False, method="first")
             rank = int(ranks.iat[d])

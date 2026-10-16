@@ -6,7 +6,8 @@ import { CvReader, type CvApply } from "@/components/CvReader";
 import { JobTitles, type Title } from "@/components/JobTitles";
 import { Leg } from "@/components/Leg";
 import { GoalPicker } from "@/components/GoalPicker";
-import { ChatPanel } from "@/components/ChatPanel";
+import { AskBar } from "@/components/AskBar";
+import { ChatPanel, type Turn } from "@/components/ChatPanel";
 import { ChipGroups } from "@/components/ChipGroups";
 import { ExperiencePicker } from "@/components/ExperiencePicker";
 import { Logo } from "@/components/Logo";
@@ -26,6 +27,7 @@ import { educationYears } from "@/lib/travel";
 
 const STORAGE_KEY = "job-transit-profile-v1";
 const ONBOARDED_KEY = "job-transit-onboarded-v1";
+const CHAT_KEY = "job-transit-chat-v1";
 
 type Saved = {
   profile: Profile;
@@ -163,7 +165,35 @@ export default function Home() {
     setExtraLabels(Object.fromEntries(rest.map((t) => [t.census, t.label])));
   };
   // The guide (chat): it can open stops on the map and change the profile.
-  const [chatOpen, setChatOpen] = useState(false);
+  // Map first; once you ask the guide, the chat becomes the main space (map shrinks to the context panel).
+  const [chatMode, setChatMode] = useState(false);
+  const [turns, setTurnsState] = useState<Turn[]>([]);
+  const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(CHAT_KEY) ?? "[]") as Turn[];
+      if (saved.length) {
+        setTurnsState(saved);
+        setChatMode(true);   // returning with a conversation: go straight to it
+      }
+    } catch {
+      /* no saved conversation */
+    }
+  }, []);
+  const setTurns = (fn: (t: Turn[]) => Turn[]) =>
+    setTurnsState((t) => {
+      const next = fn(t);
+      try {
+        localStorage.setItem(CHAT_KEY, JSON.stringify(next.map(({ role, content }) => ({ role, content }))));
+      } catch {
+        /* not remembered */
+      }
+      return next;
+    });
+  const askFromMap = (question: string) => {
+    setPendingQuestion(question);
+    setChatMode(true);
+  };
   const [viewing, setViewing] = useState<number | null>(null);
   const [focus, setFocus] = useState<{ census: number; at: number } | null>(null);
   const onChatAction = (action: ChatAction) => {
@@ -260,8 +290,8 @@ export default function Home() {
         <span className="brand">Job Transit</span>
         <span className="tagline">Plan your next stop</span>
         <span className="topbar-actions">
-          <button type="button" className="top-button top-guide" aria-expanded={chatOpen} onClick={() => setChatOpen(!chatOpen)}>
-            Ask the guide
+          <button type="button" className="top-button top-guide" onClick={() => setChatMode(!chatMode)}>
+            {chatMode ? "Map view" : "Ask the guide"}
           </button>
           <button type="button" className="top-button" aria-expanded={drawerOpen} onClick={() => setDrawerOpen(!drawerOpen)}>
             {drawerOpen ? "Hide your profile" : "Your profile"}
@@ -293,7 +323,7 @@ export default function Home() {
         />
       )}
 
-      <main className={`${drawerOpen ? "layout" : "layout layout-full"}${chatOpen ? " with-chat" : ""}`}>
+      <main className={chatMode ? `workspace${drawerOpen ? " workspace-drawer" : ""}` : drawerOpen ? "layout" : "layout layout-full"}>
         {drawerOpen && (
         <div className="planner">
           <Leg
@@ -441,7 +471,19 @@ export default function Home() {
         </div>
         )}
 
+        {chatMode && (
+          <ChatPanel
+            turns={turns}
+            setTurns={setTurns}
+            profile={profile}
+            selected={viewing}
+            onAction={onChatAction}
+            pendingQuestion={pendingQuestion}
+            onPendingSent={() => setPendingQuestion(null)}
+          />
+        )}
         <Board
+          compact={chatMode}
           city={city}
           data={data}
           sort={sort}
@@ -459,9 +501,7 @@ export default function Home() {
           onSelectedChange={setViewing}
         />
       </main>
-      {chatOpen && (
-        <ChatPanel profile={profile} selected={viewing} onAction={onChatAction} onClose={() => setChatOpen(false)} />
-      )}
+      {!chatMode && !onboarding && <AskBar onAsk={askFromMap} />}
     </>
   );
 }

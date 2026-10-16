@@ -1,37 +1,55 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { loadLocation } from "@/lib/location";
 import { streamChat, type ChatAction, type ChatMessage, type Profile } from "@/lib/api";
 import { Markdown } from "./Markdown";
 
-type Turn = ChatMessage & { status?: string; error?: string };
+export type Turn = ChatMessage & { status?: string; error?: string };
 
 const STARTERS = [
   "Where could I go that pays more?",
-  "Compare my top two stops",
-  "Make me a 6-month plan for my top stop",
-  "Which of my stops is safest from AI?",
+  "Compare my top two next steps",
+  "Make me a 6-month plan for my top next step",
+  "Which of my next steps is safest from AI?",
 ];
 
 type Props = {
+  turns: Turn[];
+  setTurns: (update: (turns: Turn[]) => Turn[]) => void;
   profile: Profile;
   selected: number | null;
   onAction: (action: ChatAction) => void;
-  onClose: () => void;
+  pendingQuestion?: string | null; // asked from the map's ask bar; sent once on arrival
+  onPendingSent?: () => void;
 };
 
 /** The guide: a chat grounded in the planner's data, which can also open stops and update the profile. */
-export function ChatPanel({ profile, selected, onAction, onClose }: Props) {
-  const [turns, setTurns] = useState<Turn[]>([]);
+export function ChatPanel({ turns, setTurns, profile, selected, onAction, pendingQuestion, onPendingSent }: Props) {
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const controller = useRef<AbortController | null>(null);
   const log = useRef<HTMLDivElement>(null);
+  const input = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     log.current?.scrollTo({ top: log.current.scrollHeight });
   }, [turns]);
   useEffect(() => () => controller.current?.abort(), []);
+  useEffect(() => {
+    if (!pendingQuestion) {
+      input.current?.focus();
+      return;
+    }
+    // Deferred so React's dev-mode double effect run sends once: the first timer is cleared before it fires.
+    const question = pendingQuestion;
+    const timer = setTimeout(() => {
+      onPendingSent?.();
+      send(question);
+    }, 0);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingQuestion]);
 
   const update = (fn: (last: Turn) => Turn) => setTurns((t) => [...t.slice(0, -1), fn(t[t.length - 1])]);
 
@@ -39,14 +57,14 @@ export function ChatPanel({ profile, selected, onAction, onClose }: Props) {
     const question = text.trim();
     if (!question || busy) return;
     const history: ChatMessage[] = [...turns.map(({ role, content }) => ({ role, content })), { role: "user", content: question }];
-    setTurns([...history, { role: "assistant", content: "" }]);
+    setTurns(() => [...history, { role: "assistant", content: "" }]);
     setDraft("");
     setBusy(true);
     controller.current = new AbortController();
     let afterTool = false;
     try {
       await streamChat(
-        { messages: history.filter((m) => m.content), profile, selected },
+        { messages: history.filter((m) => m.content), profile, selected, location: loadLocation() },
         (event) => {
           if (event.type === "text") {
             const gap = afterTool ? "\n\n" : "";
@@ -72,18 +90,20 @@ export function ChatPanel({ profile, selected, onAction, onClose }: Props) {
   }
 
   return (
-    <aside className="chat" aria-label="The guide">
+    <section className="chat" aria-label="The guide">
       <header className="chat-head">
-        <strong>Ask the guide</strong>
-        <span className="q-help">Answers come from the same data as the map.</span>
-        <button type="button" className="icon-button" aria-label="Close the guide" onClick={onClose}>
-          ×
-        </button>
+        <strong>The guide</strong>
+        <span className="q-help">Answers come from the same data as the map, and it can open stops and update your profile.</span>
+        {turns.length > 0 && !busy && (
+          <button type="button" className="linkish" onClick={() => setTurns(() => [])}>
+            New conversation
+          </button>
+        )}
       </header>
       <div className="chat-log" ref={log} aria-live="polite">
         {turns.length === 0 && (
           <div className="chat-empty">
-            <p>Ask about your next stops, compare jobs, or get a plan. The guide can open stops on the map and update your profile.</p>
+            <p>Ask about your next steps, compare jobs, or get a plan.</p>
             <div className="chat-starters">
               {STARTERS.map((s) => (
                 <button key={s} type="button" className="chip" onClick={() => send(s)}>
@@ -112,6 +132,7 @@ export function ChatPanel({ profile, selected, onAction, onClose }: Props) {
         }}
       >
         <textarea
+          ref={input}
           className="field area"
           rows={2}
           value={draft}
@@ -134,6 +155,6 @@ export function ChatPanel({ profile, selected, onAction, onClose }: Props) {
           </button>
         )}
       </form>
-    </aside>
+    </section>
   );
 }
