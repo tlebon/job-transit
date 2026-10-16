@@ -104,6 +104,14 @@ export function Openings({ census }: { census: number }) {
               ))}
             </ul>
           )}
+          {result.updated && Object.keys(result.updated).length > 0 && (
+            <p className="q-help">
+              Updated:{" "}
+              {Object.entries(result.updated)
+                .map(([name, at]) => `${name} ${ago(at)}`)
+                .join(" · ")}
+            </p>
+          )}
           {unavailable.length > 0 && (
             <p className="q-help">Not searched: {unavailable.map(([name, why]) => `${name} (${String(why).replace(/^unavailable: /, "")})`).join("; ")}.</p>
           )}
@@ -114,4 +122,12 @@ export function Openings({ census }: { census: number }) {
       )}
     </section>
   );
+}
+
+function ago(iso: string) {
+  const minutes = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (minutes < 2) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  return hours < 48 ? `${hours} h ago` : `${Math.round(hours / 24)} days ago`;
 }

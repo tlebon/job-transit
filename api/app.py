@@ -9,11 +9,12 @@ from pydantic import BaseModel, Field
 from api.chat import Guide
 from api.cv import read_cv
 from api.engine import Engine, Profile
-from api.openings import find_openings
+from api.openings import find_openings, start_collector
 
 app = FastAPI(title="Job Transit")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 engine = Engine()
+start_collector(engine)   # job board postings, collected in the background (api/openings.py)
 guide = None  # created on first chat, so the API starts without an Anthropic key
 
 
@@ -180,6 +181,7 @@ class ChatIn(BaseModel):
     profile: ProfileIn
     selected: int | None = None
     location: Location | None = None
+    plan: dict | None = None   # the saved plan, so the guide can discuss and revise it
 
 
 @app.post("/chat")
@@ -190,5 +192,5 @@ def chat(body: ChatIn):
         guide = Guide(engine)
     return StreamingResponse(
         guide.stream([m.model_dump() for m in body.messages], Profile(**body.profile.model_dump()), body.selected,
-                     body.location.model_dump() if body.location else None),
+                     body.location.model_dump() if body.location else None, body.plan),
         media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
