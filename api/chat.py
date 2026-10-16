@@ -16,6 +16,7 @@ import anthropic
 from dotenv import load_dotenv
 
 from api.engine import Engine, Profile
+from api.openings import COUNTRIES, find_openings
 
 load_dotenv()
 
@@ -37,6 +38,9 @@ advice rather than something from the data.
 they tell you something new about themselves (goals, hobbies, experience, a second job title). Say what you changed.
 - Be honest about limits: the data places people by the kind of work, not seniority; some jobs (product designer, \
 consultant) only exist inside broad census groups; pay and growth are US figures.
+- find_openings searches live job boards (Adzuna, 80,000 Hours, Arbeitnow, AI company boards) for one occupation. \
+Show a few concrete postings with their links; say which sources were unavailable. Use the person's city unless they \
+ask about another place.
 - Occupations are identified by census codes; get them from search_jobs or recommend, never guess them.
 
 The person's current situation:
@@ -73,6 +77,20 @@ TOOLS = [
         "input_schema": {"type": "object", "properties": {"census": {"type": "integer"}}, "required": ["census"]},
     },
     {
+        "name": "find_openings",
+        "description": ("Live job postings for one occupation from job boards, postings in the city first, then "
+                        "remote, then elsewhere. Each posting's title is checked against the occupation."),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "census": {"type": "integer"},
+                "city": {"type": "string", "description": "Defaults to the person's city."},
+                "country": {"type": "string", "enum": COUNTRIES, "description": "Two-letter code; defaults to theirs."},
+            },
+            "required": ["census"],
+        },
+    },
+    {
         "name": "open_stop",
         "description": "App action: open a destination's stop page on the map so the person can see it.",
         "input_schema": {"type": "object", "properties": {"census": {"type": "integer"}}, "required": ["census"]},
@@ -98,6 +116,7 @@ TOOL_LABELS = {
     "search_jobs": lambda a: f"Searching jobs for “{a.get('query', '')}”",
     "recommend": lambda a: "Ranking next stops" + (" with different settings" if a else ""),
     "stop_details": lambda a: "Looking up a stop",
+    "find_openings": lambda a: "Searching job boards" + (f" in {a['city']}" if a.get("city") else ""),
     "open_stop": lambda a: "Opening the stop on the map",
     "update_profile": lambda a: "Updating your profile",
 }
@@ -119,7 +138,7 @@ class Guide:
         self.client = anthropic.Anthropic()
 
     # ---- context and tools -----------------------------------------------------------------
-    def context(self, profile: Profile, selected: int | None) -> str:
+    def context(self, profile: Profile, selected: int | None, location: dict | None = None) -> str:
         e = self.engine
         lines = []
         if profile.job is not None and profile.job in e.position:
@@ -148,11 +167,13 @@ class Guide:
                     f"{r['title']} (census {r['census']}, {r.get('reach_label', '')})" for r in rec["results"][:8]))
         except Exception as error:  # the chat still works without the summary
             lines.append(f"(Couldn't compute recommendations: {error})")
+        if location:
+            lines.append(f"Looking for work in: {location['city']} ({location['country']})")
         if selected is not None and selected in e.position:
             lines.append(f"They are looking at the stop page for: {e.census.at[selected, 'title']} (census {selected})")
         return "\n".join(lines) or "They haven't told the app anything yet."
 
-    def run_tool(self, name: str, args: dict, profile: Profile):
+    def run_tool(self, name: str, args: dict, profile: Profile, location: dict | None = None):
         """Returns (result for Claude, app action or None)."""
         e = self.engine
         if name == "search_jobs":
@@ -176,6 +197,15 @@ class Guide:
                     "move": d.get("reach"), "skill_gaps": d.get("gaps"), "transfers": d.get("transfers"),
                     "pay_change_pct": d.get("pay_change_pct"), "experience_note": d.get("experience_note"),
                     "on_the_job_training": occ.get("on_the_job_training")}, None
+        if name == "find_openings":
+            code = args.get("census")
+            if code not in e.position:
+                return {"error": "unknown census code; use search_jobs"}, None
+            where = location or {"city": "Berlin", "country": "de"}
+            found = find_openings(e, code, args.get("city") or where["city"], args.get("country") or where["country"], limit=10)
+            for p in found["openings"]:
+                p.pop("near", None)
+            return found, None
         if name == "open_stop":
             code = args.get("census")
             if code not in e.position:
@@ -191,13 +221,13 @@ class Guide:
         return {"error": f"unknown tool {name}"}, None
 
     # ---- the conversation ------------------------------------------------------------------
-    def stream(self, messages: list[dict], profile: Profile, selected: int | None = None):
+    def stream(self, messages: list[dict], profile: Profile, selected: int | None = None, location: dict | None = None):
         """Yields server-sent-event lines. `messages`: [{role: user|assistant, content: str}]."""
         def event(payload):
             return f"data: {_json(payload)}\n\n"
 
         try:
-            system = SYSTEM.format(context=self.context(profile, selected))
+            system = SYSTEM.format(context=self.context(profile, selected, location))
             convo = [{"role": m["role"], "content": m["content"]} for m in messages if m.get("content")]
             for _ in range(MAX_TOOL_ROUNDS):
                 with self.client.messages.stream(model=CHAT_MODEL, max_tokens=1500, system=system,
@@ -215,7 +245,7 @@ class Guide:
                     label = TOOL_LABELS.get(block.name, lambda a: block.name)(block.input or {})
                     yield event({"type": "tool", "label": label})
                     try:
-                        result, action = self.run_tool(block.name, block.input or {}, profile)
+                        result, action = self.run_tool(block.name, block.input or {}, profile, location)
                     except Exception as error:  # report to Claude, keep going
                         result, action = {"error": str(error)}, None
                     if action:

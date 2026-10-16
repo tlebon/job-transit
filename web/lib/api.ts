@@ -139,6 +139,17 @@ export type StopDetails = {
   from_occupation?: Occupation;
 };
 
+export type Opening = { title: string; company: string; location: string; url: string; source: string; near: 0 | 1 | 2 };
+export type Openings = {
+  occupation: string;
+  search_terms: string[];
+  city: string;
+  country: string;
+  sources: Record<string, number | string>; // count found, or "unavailable: ..."
+  openings: Opening[];
+  total_matched: number;
+};
+
 export const api = {
   meta: () => getJson<Meta>("/meta"),
   map: () => getJson<CityMap>("/map"),
@@ -155,6 +166,13 @@ export const api = {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ profile, census }),
+      signal,
+    }),
+  openings: (census: number, city: string, country: string, signal?: AbortSignal) =>
+    getJson<Openings>("/openings", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ census, city, country }),
       signal,
     }),
   recommend: (profile: Profile, sort: SortKey, signal?: AbortSignal) =>
@@ -202,7 +220,7 @@ export type ChatEvent =
 
 /** Streams the guide's reply (server-sent events) and calls onEvent for each event. */
 export async function streamChat(
-  body: { messages: ChatMessage[]; profile: Profile; selected: number | null },
+  body: { messages: ChatMessage[]; profile: Profile; selected: number | null; location?: { city: string; country: string } },
   onEvent: (event: ChatEvent) => void,
   signal?: AbortSignal,
 ) {

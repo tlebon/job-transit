@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from api.chat import Guide
 from api.cv import read_cv
 from api.engine import Engine, Profile
+from api.openings import find_openings
 
 app = FastAPI(title="Job Transit")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -147,15 +148,38 @@ def cv(body: CvIn):
     }
 
 
+Country = Literal["de", "gb", "us", "nl", "at", "fr", "it", "pl", "ca", "au"]   # same as openings.COUNTRIES
+
+
+class OpeningsIn(BaseModel):
+    census: int
+    city: str = Field(default="Berlin", max_length=80)
+    country: Country = "de"
+
+
+@app.post("/openings")
+def openings(body: OpeningsIn):
+    """Live postings for an occupation from Adzuna, 80,000 Hours, Arbeitnow and AI company boards."""
+    if body.census not in engine.position:
+        raise HTTPException(400, "Unknown occupation code")
+    return find_openings(engine, body.census, body.city.strip(), body.country)
+
+
 class ChatMessage(BaseModel):
     role: Literal["user", "assistant"]
     content: str = Field(max_length=8000)
+
+
+class Location(BaseModel):
+    city: str = Field(default="Berlin", max_length=80)
+    country: Country = "de"
 
 
 class ChatIn(BaseModel):
     messages: list[ChatMessage] = Field(min_length=1, max_length=40)
     profile: ProfileIn
     selected: int | None = None
+    location: Location | None = None
 
 
 @app.post("/chat")
@@ -165,5 +189,6 @@ def chat(body: ChatIn):
     if guide is None:
         guide = Guide(engine)
     return StreamingResponse(
-        guide.stream([m.model_dump() for m in body.messages], Profile(**body.profile.model_dump()), body.selected),
+        guide.stream([m.model_dump() for m in body.messages], Profile(**body.profile.model_dump()), body.selected,
+                     body.location.model_dump() if body.location else None),
         media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

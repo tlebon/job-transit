@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api, type Occupation, type Profile, type Stop, type StopDetails } from "@/lib/api";
+import { Openings } from "./Openings";
 import { WhatItIs } from "./WhatItIs";
 import { aiExposure, growthText, shortTitle, usd } from "@/lib/describe";
 import { lineOf } from "@/lib/lines";
@@ -202,6 +203,8 @@ export function StopPage({ stop, request, start, legs, schooling, hasEducation, 
           )}
         </dl>
       </section>
+
+      <Openings census={stop.census} />
 
       <div className="route-actions">
         <button type="button" className="action" onClick={onContinue}>
