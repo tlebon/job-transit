@@ -43,7 +43,7 @@ export function JobPicker({ value, onChange }: Props) {
       <input
         className="field"
         type="search"
-        placeholder="Frontend developer"
+        placeholder="Hotel manager"
         aria-label="Your current or most recent job title"
         value={query}
         onChange={(e) => setQuery(e.target.value)}

@@ -75,7 +75,6 @@ button, input, select, textarea { font: inherit; color: inherit; }
   gap: 20px; padding: 20px; max-width: 1600px; margin: 0 auto; align-items: start;
 }
 @media (max-width: 900px) { .layout { grid-template-columns: minmax(0, 1fr); padding: 16px; } }
-.layout { padding-bottom: 104px; } /* room for the guide's ask bar */
 
 /* ---- journey planner ---- */
 .planner { display: flex; flex-direction: column; gap: 12px; }
@@ -99,6 +98,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
 
 .field { width: 100%; height: 42px; padding: 0 12px; border: 1px solid var(--rule); border-radius: var(--radius-s); background: var(--paper); }
 .field:focus { border-color: var(--ink); }
+/* text fields show focus with their border; the thick yellow ring is for buttons and links reached by keyboard */
+.field:focus-visible { outline: none; box-shadow: 0 0 0 1px var(--ink); }
 .picked {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
   padding: 10px 12px; border-radius: var(--radius-s); background: var(--paper);
@@ -351,10 +352,12 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .map-expanded { position: fixed; inset: 80px 24px 24px; z-index: 60; box-shadow: 0 12px 40px rgb(0 0 0 / 0.25); border-radius: var(--radius-m); }
 .map-expanded .city { height: 100% !important; min-height: 0; }
 .ask-bar {
-  position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 30; width: min(720px, calc(100vw - 32px));
-  display: grid; grid-template-columns: 1fr auto; gap: 8px; padding: 10px; background: var(--panel);
+  position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 6; width: min(640px, calc(100% - 120px));
+  display: grid; grid-template-columns: 1fr auto; gap: 8px; padding: 8px; background: var(--panel);
   border: 1px solid var(--rule); border-radius: var(--radius-m); box-shadow: 0 8px 28px rgb(0 0 0 / 0.18);
 }
+/* narrow screens: the map is too small to cover, so the ask bar sits below it */
+@media (max-width: 700px) { .ask-bar { position: static; transform: none; width: 100%; margin-top: 10px; box-shadow: none; } }
 .ask-bar .field { height: 42px; }
 .top-button.top-guide { background: var(--signal); color: var(--signal-ink); border-color: var(--signal); }
 .fact-sub { display: block; font-weight: 400; font-size: 13px; color: var(--ink-2); margin-top: 2px; }
@@ -435,7 +438,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .here-marker:focus-visible .here-edge { fill: var(--signal); }
 .list-sub { display: block; font-size: 12px; color: var(--ink-3); }
 .map-key {
-  position: absolute; right: 12px; bottom: 12px; max-width: 260px; font-size: 13px; color: var(--ink-2);
+  position: absolute; left: 12px; top: 12px; max-width: 260px; font-size: 13px; color: var(--ink-2); z-index: 5;
   background: var(--panel); border: 1px solid var(--rule); border-radius: var(--radius-s);
 }
 .map-key-toggle { display: block; margin-left: auto; padding: 6px 12px; border: 0; background: none; font: inherit; font-weight: 700; color: var(--ink); cursor: pointer; }

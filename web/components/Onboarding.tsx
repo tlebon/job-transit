@@ -115,7 +115,7 @@ export function Onboarding({
               <textarea
                 className="field area"
                 rows={3}
-                placeholder="Lead a team of five engineers, review code, plan sprints, still write some frontend features"
+                placeholder="Run the front desk, handle bookings and complaints, train new staff, plan the weekly rota"
                 value={description}
                 onChange={(e) => onDescription(e.target.value)}
               />
@@ -136,7 +136,7 @@ export function Onboarding({
               <textarea
                 className="field area"
                 rows={2}
-                placeholder="Bouldering, improv comedy, writing short stories"
+                placeholder="Gardening, cycling, cooking for friends"
                 value={hobbies}
                 onChange={(e) => onHobbies(e.target.value)}
               />

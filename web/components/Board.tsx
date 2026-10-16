@@ -17,6 +17,7 @@ type Props = {
   request: Profile;
   onPlan: (stop: Stop) => void;
   children?: ReactNode; // shown under the header (the saved plan)
+  mapOverlay?: ReactNode; // floats at the bottom of the full-size map (the ask bar)
   focus?: { census: number; at: number } | null; // ask the board to open a stop (e.g. from the guide)
   onSelectedChange?: (census: number | null) => void;
   compact?: boolean; // beside the chat: small map on top (expandable), stop pages below
@@ -24,7 +25,7 @@ type Props = {
 
 const PIN_COUNT = 10;
 
-export function Board({ city, data, sort, onSort, error, schooling, request, onPlan, focus, onSelectedChange, compact, children }: Props) {
+export function Board({ city, data, sort, onSort, error, schooling, request, onPlan, focus, onSelectedChange, compact, children, mapOverlay }: Props) {
   const [selected, setSelected] = useState<number | null>(null);
   const [mapExpanded, setMapExpanded] = useState(false);
   useEffect(() => {
@@ -141,6 +142,7 @@ export function Board({ city, data, sort, onSort, error, schooling, request, onP
         ) : (
           <div className="city city-loading">Loading the map…</div>
         )}
+        {!compact && mapOverlay}
         </div>
         <aside className="side" ref={side}>
           {selected !== null && selected === currentCode && start ? (
