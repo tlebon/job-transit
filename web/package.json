@@ -9,7 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "next": "15.3.3",
+    "next": "15.3.8",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "@fontsource/overpass": "5.2.8"
