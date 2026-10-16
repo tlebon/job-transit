@@ -320,6 +320,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .md-table th, .md-table td { border-bottom: 1px solid var(--rule); padding: 5px 8px; text-align: left; vertical-align: top; }
 .md-table th { font-weight: 700; color: var(--ink-2); }
 .chat-input { display: grid; grid-template-columns: 1fr auto; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--rule); align-items: end; }
+.chat-box { height: 42px; min-height: 42px; padding: 10px 12px; line-height: 20px; resize: none; overflow-y: auto; display: block; }
+.chat-input .action { height: 42px; align-self: end; } /* .action defaults to flex-start */
 /* chat mode: the guide is the main column, the board (mini-map + stop pages) the context panel */
 .workspace {
   display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 480px); gap: 20px; padding: 20px;
@@ -328,8 +330,20 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .workspace-drawer { grid-template-columns: minmax(0, 340px) minmax(0, 1fr) minmax(0, 440px); }
 @media (max-width: 1100px) { .workspace, .workspace-drawer { grid-template-columns: minmax(0, 1fr); } .chat { height: 70vh; position: static; } }
 .board-compact { position: sticky; top: 20px; max-height: calc(100vh - 40px); overflow: auto; }
+/* Wide screens: chat mode is an app shell. The page itself doesn't scroll; each column scrolls on its own,
+   so the chat, the context panel and the profile drawer always share the same top and bottom edge. */
+@media (min-width: 1101px) {
+  body:has(> main.workspace) { height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+  body:has(> main.workspace) > .topbar { flex: none; }
+  .workspace { flex: 1; min-height: 0; width: 100%; grid-template-rows: minmax(0, 1fr); align-items: stretch; }
+  .workspace > * { min-height: 0; overflow-y: auto; }
+  .workspace > .chat { height: auto; position: static; overflow: hidden; }
+  .workspace > .board-compact { position: static; max-height: none; }
+}
 .board-compact .board-body { display: flex; flex-direction: column; align-items: stretch; gap: 12px; }
 .board-compact .city { height: 230px; min-height: 230px; }
+/* The mini-map is too small for the key: it shows once the map is expanded */
+.board-compact .map-slot:not(.map-expanded) .map-key { display: none; }
 .board-compact .stop-page { max-height: none; }
 .map-slot { position: relative; }
 .map-toggle { position: absolute; top: 8px; right: 8px; z-index: 5; height: 30px; padding: 0 10px; font-size: 13px; }

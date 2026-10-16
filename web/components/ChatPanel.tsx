@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { loadLocation } from "@/lib/location";
 import { streamChat, type ChatAction, type ChatMessage, type Profile } from "@/lib/api";
 import { Markdown } from "./Markdown";
@@ -50,6 +50,14 @@ export function ChatPanel({ turns, setTurns, profile, selected, onAction, pendin
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingQuestion]);
+
+  // The input grows with the text (up to ~6 lines, then scrolls) instead of a drag handle.
+  useLayoutEffect(() => {
+    const el = input.current;
+    if (!el || el.offsetParent === null) return; // hidden: nothing to measure (CSS min-height covers it)
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight + el.offsetHeight - el.clientHeight, 160)}px`;
+  }, [draft]);
 
   const update = (fn: (last: Turn) => Turn) => setTurns((t) => [...t.slice(0, -1), fn(t[t.length - 1])]);
 
@@ -133,8 +141,8 @@ export function ChatPanel({ turns, setTurns, profile, selected, onAction, pendin
       >
         <textarea
           ref={input}
-          className="field area"
-          rows={2}
+          className="field chat-box"
+          rows={1}
           value={draft}
           placeholder="Ask anything about your next move"
           onChange={(e) => setDraft(e.target.value)}
