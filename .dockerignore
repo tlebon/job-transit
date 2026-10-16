@@ -1,0 +1,12 @@
+# Keep the build context small and keep private data out of it.
+.env
+.env.*
+.venv
+.git
+data/*
+!data/derived
+notebooks
+web
+**/__pycache__
+**/.ipynb_checkpoints
+.DS_Store
