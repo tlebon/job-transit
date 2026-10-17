@@ -21,6 +21,7 @@ type Props = {
   planSavedAt?: number; // the guide just saved a plan: show the plan tab
   loading?: boolean; // next jobs are being re-ranked
   onAbout?: () => void; // open "About the data"
+  onOpeningsFound?: (census: number, openings: { url: string; title: string; company: string; location: string }[]) => void;
   focus?: { census: number; at: number } | null; // ask the board to open a stop (e.g. from the guide)
   onSelectedChange?: (census: number | null) => void;
   compact?: boolean; // beside the chat: small map on top (expandable), stop pages below
@@ -28,7 +29,7 @@ type Props = {
 
 const PIN_COUNT = 10;
 
-export function Board({ city, data, sort, onSort, error, schooling, request, onPlan, focus, onSelectedChange, compact, children, mapOverlay, planSavedAt, loading, onAbout }: Props) {
+export function Board({ city, data, sort, onSort, error, schooling, request, onPlan, focus, onSelectedChange, compact, children, mapOverlay, planSavedAt, loading, onAbout, onOpeningsFound }: Props) {
   const [selected, setSelected] = useState<number | null>(null);
   const [mapExpanded, setMapExpanded] = useState(false);
   useEffect(() => {
@@ -187,6 +188,7 @@ export function Board({ city, data, sort, onSort, error, schooling, request, onP
               hasEducation={schooling !== null}
               onClose={() => setSelected(null)}
               onPlan={() => onPlan(selectedStop)}
+              onOpeningsFound={onOpeningsFound}
             />
           ) : (
             <>

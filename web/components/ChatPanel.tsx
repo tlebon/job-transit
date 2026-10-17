@@ -30,15 +30,19 @@ type Props = {
   selected: number | null;
   onAction: (action: ChatAction) => void;
   pendingQuestion?: string | null; // asked from the map's ask bar; sent once on arrival
-  hidden?: boolean; // map view: stays mounted so an answer in progress keeps streaming
+  hidden?: boolean; // map view or another tab: stays mounted so an answer in progress keeps streaming
+  extraBody?: () => Record<string, unknown>; // read at send time: the other plans and conversations
+  onBusy?: (busy: boolean) => void;
+  placeholder?: string;
   onPendingSent?: () => void;
   plan?: Plan | null; // sent along so the guide can discuss and revise it
 };
 
 /** The guide: a chat grounded in the planner's data, which can also open jobs and update the profile. */
-export function ChatPanel({ turns, setTurns, profile, selected, onAction, pendingQuestion, onPendingSent, plan, hidden }: Props) {
+export function ChatPanel({ turns, setTurns, profile, selected, onAction, pendingQuestion, onPendingSent, plan, hidden, extraBody, onBusy, placeholder }: Props) {
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
+  useEffect(() => onBusy?.(busy), [busy]); // eslint-disable-line react-hooks/exhaustive-deps
   const controller = useRef<AbortController | null>(null);
   const log = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
@@ -116,7 +120,7 @@ export function ChatPanel({ turns, setTurns, profile, selected, onAction, pendin
     let failed = false;
     try {
       await streamChat(
-        { messages: history, profile, selected, location: searchForChat(), plan },
+        { messages: history, profile, selected, location: searchForChat(), plan, ...(extraBody?.() ?? {}) },
         (event) => {
           if (event.type === "text") {
             answered = true;
@@ -218,7 +222,7 @@ export function ChatPanel({ turns, setTurns, profile, selected, onAction, pendin
           className="field chat-box"
           rows={1}
           value={draft}
-          placeholder="Ask anything about your next move"
+          placeholder={placeholder ?? "Ask anything about your next move"}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {

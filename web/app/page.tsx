@@ -28,11 +28,26 @@ import {
   type SortKey,
 } from "@/lib/api";
 import { educationYears } from "@/lib/travel";
-import { findStep, loadPlan, logSession, planFromAction, savePlan, updateStep, type Plan } from "@/lib/plan";
+import { findStep, logSession, planFromAction, updateStep, type Plan } from "@/lib/plan";
+import {
+  activePlan,
+  addFound,
+  EMPTY as EMPTY_WORKSPACE,
+  EXPLORE,
+  loadWorkspace,
+  newId,
+  otherChatsForChat,
+  otherPlansForChat,
+  removePlan,
+  saveWorkspace,
+  setOpeningStatus,
+  upsertPlan,
+  type Workspace,
+} from "@/lib/workspace";
+import { PlanTabs, PlansList } from "@/components/PlanTabs";
 
 const STORAGE_KEY = "job-transit-profile-v1";
 const ONBOARDED_KEY = "job-transit-onboarded-v1";
-const CHAT_KEY = "job-transit-chat-v1";
 
 type Saved = {
   profile: Profile;
@@ -69,7 +84,18 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [city, setCity] = useState<CityMap | null>(null);
-  const [plan, setPlanState] = useState<Plan | null>(null);
+  // plans and their conversations (workspace.ts); `plan` is the one whose tab is open, if any
+  const [ws, setWsState] = useState<Workspace>(EMPTY_WORKSPACE);
+  const wsRef = useRef(ws);
+  wsRef.current = ws;
+  const updateWs = (fn: (w: Workspace) => Workspace) =>
+    setWsState((w) => {
+      const next = fn(w);
+      saveWorkspace(next);
+      return next;
+    });
+  const plan = activePlan(ws);
+  const [busyChats, setBusyChats] = useState<Record<string, boolean>>({});
   const [planSavedAt, setPlanSavedAt] = useState<number | undefined>(undefined);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [search, setSearchState] = useState<Search>(DEFAULT_SEARCH);
@@ -92,11 +118,14 @@ export default function Home() {
     warmed.current = key;
     api.warmOpenings(codes, where.city, where.country);
   };
-  useEffect(() => setPlanState(loadPlan()), []);
-  const setPlan = (next: Plan | null) => {
-    setPlanState(next);
-    savePlan(next);
-  };
+  /** Replace one plan (null removes it, with its conversation). */
+  const setPlanById = (id: string, next: Plan | null) =>
+    updateWs((w) => (next ? { ...w, plans: w.plans.map((p) => (p.id === id ? { ...next, id } : p)) } : removePlan(w, id)));
+  const openTab = (id: string) => updateWs((w) => ({ ...w, active: id }));
+  // another tab: its plan starts at the top of the side panel, not where the last one was scrolled to
+  useEffect(() => {
+    document.querySelector(".board-compact")?.scrollTo({ top: 0 });
+  }, [ws.active]);
   const [onboarding, setOnboarding] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
@@ -196,58 +225,67 @@ export default function Home() {
   // The guide (chat): it can open stops on the map and change the profile.
   // Map first; once you ask the guide, the chat becomes the main space (map shrinks to the context panel).
   const [chatMode, setChatMode] = useState(false);
-  const [turns, setTurnsState] = useState<Turn[]>([]);
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
   useEffect(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(CHAT_KEY) ?? "[]") as Turn[];
-      if (saved.length) {
-        setTurnsState(saved);
-        setChatMode(true);   // returning with a conversation: go straight to it
-      }
-    } catch {
-      /* no saved conversation */
-    }
+    const saved = loadWorkspace();
+    setWsState(saved);
+    if (Object.values(saved.chats).some((t) => t.length)) setChatMode(true); // returning with a conversation
   }, []);
-  const setTurns = (fn: (t: Turn[]) => Turn[]) =>
-    setTurnsState((t) => {
-      const next = fn(t);
-      try {
-        localStorage.setItem(
-          CHAT_KEY,
-          JSON.stringify(next.map(({ role, content, failed, error }) => (failed ? { role, content, failed, error } : { role, content }))),
-        );
-      } catch {
-        /* not remembered */
-      }
-      return next;
-    });
+  /** Each conversation writes to its own history, even while another tab is open. */
+  const setTurnsFor = (id: string) => (fn: (t: Turn[]) => Turn[]) =>
+    updateWs((w) => ({ ...w, chats: { ...w.chats, [id]: fn((w.chats[id] ?? []) as Turn[]) } }));
   const askFromMap = (question: string) => {
     setPendingQuestion(question);
     setChatMode(true);
   };
   const [viewing, setViewing] = useState<number | null>(null);
   const [focus, setFocus] = useState<{ census: number; at: number } | null>(null);
-  const onChatAction = (action: ChatAction) => {
+  /** The plan an action from conversation `chatId` is about: that tab's plan, else the one with a matching step
+   * (or occupation), so an action from Explore still lands somewhere sensible. */
+  const planFor = (w: Workspace, chatId: string, match?: (p: Plan) => boolean) =>
+    w.plans.find((p) => p.id === chatId && (!match || match(p))) ?? (match ? w.plans.find(match) : undefined);
+
+  const onChatAction = (action: ChatAction, chatId: string) => {
     if (action.type === "set_location") {
       setSearch({ places: action.places, remote: action.remote, confirmed: true });
       return;
     }
     if (action.type === "save_plan") {
-      setPlan(planFromAction(action, plan));
+      updateWs((w) => {
+        const previous = w.plans.find((p) => p.census === action.census) ?? null;
+        const { ws: next, id, created } = upsertPlan(w, planFromAction(action, previous));
+        return created ? { ...next, active: id } : next; // a new plan opens its own tab
+      });
       setPlanSavedAt(Date.now());
       return;
     }
     if (action.type === "suggest_replies") return; // shown in the chat itself
-    if (action.type === "log_practice") {
-      const step = plan && findStep(plan, action.title);
-      if (plan && step) setPlan(logSession(plan, step.id));
+    if (action.type === "log_practice" || action.type === "update_step") {
+      updateWs((w) => {
+        const target = planFor(w, chatId, (p) => !!findStep(p, action.title));
+        const step = target && findStep(target, action.title);
+        if (!target || !step) return w;
+        const changed =
+          action.type === "log_practice" ? logSession(target, step.id) : updateStep(target, step.id, { resources: action.resources });
+        return { ...w, plans: w.plans.map((p) => (p.id === target.id ? changed : p)) };
+      });
       return;
     }
-    if (action.type === "update_step") {
-      if (!plan) return;
-      const step = findStep(plan, action.title);
-      if (step) setPlan(updateStep(plan, step.id, { resources: action.resources }));
+    if (action.type === "openings_found") {
+      updateWs((w) => {
+        const target = w.plans.find((p) => p.census === action.census);
+        return target ? { ...w, plans: w.plans.map((p) => (p.id === target.id ? addFound(p, action.openings) : p)) } : w;
+      });
+      return;
+    }
+    if (action.type === "track_application") {
+      updateWs((w) => {
+        const matches = (p: Plan) => (p.openings ?? []).some((o) => o.url === action.url);
+        const target = planFor(w, chatId, matches);
+        return target
+          ? { ...w, plans: w.plans.map((p) => (p.id === target.id ? setOpeningStatus(p, action.url, action.status) : p)) }
+          : w;
+      });
       return;
     }
     if (action.type === "open_job") {
@@ -284,7 +322,7 @@ export default function Home() {
   // Save the profile to a file and load it back: a stand-in for accounts, so nothing has to be retyped.
   const [fileError, setFileError] = useState<string | null>(null);
   const saveToFile = () => {
-    const blob = new Blob([JSON.stringify({ app: "job-transit", version: 1, profile, jobLabel, extraLabels, cv }, null, 2)], {
+    const blob = new Blob([JSON.stringify({ app: "job-transit", version: 2, profile, jobLabel, extraLabels, cv, plans: ws.plans, search }, null, 2)], {
       type: "application/json",
     });
     const url = URL.createObjectURL(blob);
@@ -311,6 +349,12 @@ export default function Home() {
       setCv(saved.cv ?? null);
       setHobbiesDraft(null);
       setDescriptionDraft(null);
+      if (Array.isArray(saved.plans)) {
+        // plans come back with fresh, empty conversations (conversations aren't in the file)
+        const plans = (saved.plans as Plan[]).filter((p) => Array.isArray(p.steps)).map((p) => ({ ...p, id: p.id ?? newId() }));
+        updateWs(() => ({ plans, chats: Object.fromEntries([[EXPLORE, []], ...plans.map((p) => [p.id!, []])]), active: EXPLORE }));
+      }
+      if (saved.search?.places) setSearch(saved.search);
       finishOnboarding();
     } catch (e) {
       setFileError(`Couldn’t load that file: ${e instanceof Error ? e.message : "unreadable"}.`);
@@ -324,7 +368,7 @@ export default function Home() {
     setCv(null);
     setHobbiesDraft(null);
     setDescriptionDraft(null);
-    setPlan(null);
+    updateWs(() => EMPTY_WORKSPACE);
     setDrawerOpen(false);
     setOnboarding(true);
   };
@@ -332,9 +376,27 @@ export default function Home() {
   const request = profile;
   const planMove = (stop: { census: number; title: string }) => {
     setFocus({ census: stop.census, at: Date.now() });
-    setPendingQuestion(`Make me a plan for moving to “${stop.title}”.`);
+    const existing = ws.plans.find((p) => p.census === stop.census);
+    if (existing) openTab(existing.id!); // already planned: open it
+    else {
+      openTab(EXPLORE);
+      setPendingQuestion(`Make me a plan for moving to “${stop.title}”.`);
+    }
     setChatMode(true);
   };
+  // reminders cover every plan: the server keeps one list per address
+  const allPlans: Plan | undefined = ws.plans.length
+    ? {
+        census: ws.plans[0].census,
+        occupation: ws.plans.map((p) => p.name || p.occupation).join(", "),
+        summary: "",
+        created: ws.plans[0].created,
+        steps: ws.plans.flatMap((p) =>
+          p.steps.map((st) => (ws.plans.length > 1 ? { ...st, title: `${p.name || p.occupation}: ${st.title}` } : st)),
+        ),
+      }
+    : undefined;
+  const chatIds = [EXPLORE, ...ws.plans.map((p) => p.id!)];
 
   return (
     <>
@@ -544,7 +606,7 @@ export default function Home() {
           </div>
 
           <div className="profile-file">
-            <span className="q-help">Your profile stays in this browser. Save it to a file to pick it up on another device.</span>
+            <span className="q-help">Your profile and plans stay in this browser. Save them to a file to pick them up on another device.</span>
             <div className="profile-file-actions">
               <button type="button" className="linkish" onClick={saveToFile}>
                 Save to a file
@@ -567,17 +629,32 @@ export default function Home() {
         </div>
         )}
 
-        <ChatPanel
-          hidden={!chatMode}
-          turns={turns}
-          setTurns={setTurns}
-          profile={profile}
-          selected={viewing}
-          onAction={onChatAction}
-          pendingQuestion={pendingQuestion}
-          onPendingSent={() => setPendingQuestion(null)}
-          plan={plan}
-        />
+        <div className="chat-column" hidden={!chatMode}>
+          <PlanTabs plans={ws.plans} active={ws.active} busy={busyChats} onSelect={openTab} />
+          {chatIds.map((id) => {
+            const own = ws.plans.find((p) => p.id === id) ?? null;
+            return (
+              <ChatPanel
+                key={id}
+                hidden={id !== ws.active}
+                turns={(ws.chats[id] ?? []) as Turn[]}
+                setTurns={setTurnsFor(id)}
+                profile={profile}
+                selected={viewing}
+                onAction={(action) => onChatAction(action, id)}
+                pendingQuestion={id === ws.active ? pendingQuestion : null}
+                onPendingSent={() => setPendingQuestion(null)}
+                plan={own}
+                extraBody={() => ({
+                  other_plans: otherPlansForChat(wsRef.current, id),
+                  other_chats: otherChatsForChat(wsRef.current, id),
+                })}
+                onBusy={(b) => setBusyChats((m) => (m[id] === b ? m : { ...m, [id]: b }))}
+                placeholder={own ? `Ask about your ${own.name || own.occupation} plan` : undefined}
+              />
+            );
+          })}
+        </div>
         <Board
           compact={chatMode}
           city={city}
@@ -594,11 +671,22 @@ export default function Home() {
           planSavedAt={planSavedAt}
           loading={loading}
           onAbout={() => setAboutOpen(true)}
+          onOpeningsFound={(census, openings) => onChatAction({ type: "openings_found", census, openings }, EXPLORE)}
         >
+          {!plan && ws.plans.length > 0 && (
+            <PlansList
+              plans={ws.plans}
+              onOpen={(id) => {
+                openTab(id);
+                setChatMode(true);
+              }}
+            />
+          )}
           {plan && (
             <PlanCard
               plan={plan}
-              onChange={setPlan}
+              emailPlan={allPlans}
+              onChange={(next) => setPlanById(plan.id!, next)}
               onPractice={(step) => {
                 setPendingQuestion(`Give me a short practice session for this step of my plan: “${step.title}”`);
                 setChatMode(true);

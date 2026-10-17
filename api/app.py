@@ -7,7 +7,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from api.chat import Guide
+from api.chat import Guide, summarize
 from api.cv import read_cv
 from api.engine import Engine, Profile
 from api import mailer
@@ -259,7 +259,7 @@ def unsubscribe(token: str):
 
 class ChatMessage(BaseModel):
     role: Literal["user", "assistant"]
-    content: str = Field(max_length=8000)
+    content: str = Field(max_length=30000)
 
 
 class Place(BaseModel):
@@ -275,11 +275,33 @@ class Location(Place):
 
 
 class ChatIn(BaseModel):
-    messages: list[ChatMessage] = Field(min_length=1, max_length=40)
+    messages: list[ChatMessage] = Field(min_length=1, max_length=200)
+    summary: str | None = Field(default=None, max_length=8000)   # the older part of the conversation, compacted
     profile: ProfileIn
     selected: int | None = None
     location: Location | None = None
-    plan: dict | None = None   # the saved plan, so the guide can discuss and revise it
+    plan: dict | None = None   # the plan this conversation belongs to (None in Explore)
+    other_plans: list[dict] = Field(default_factory=list, max_length=10)   # short summaries of the other plans
+    other_chats: dict[str, list[dict]] = Field(default_factory=dict)   # their recent messages, for read_chat
+
+
+MAX_CHAT_CHARS = 400_000   # ~100k tokens: the app compacts long before this (web/lib/workspace.ts)
+
+
+class CompactIn(BaseModel):
+    messages: list[ChatMessage] = Field(min_length=1, max_length=200)
+    previous: str | None = Field(default=None, max_length=8000)
+
+
+@app.post("/chat/compact")
+def chat_compact(body: CompactIn, request: Request):
+    """Summarize the older part of a conversation (Haiku), so the app can send that instead of every message."""
+    if not mailer.allowed(f"compact:{client_ip(request)}", 30, 3600):
+        raise HTTPException(429, "Too many requests for now.")
+    try:
+        return {"summary": summarize([m.model_dump() for m in body.messages], body.previous)}
+    except Exception as e:   # the chat still works without it: the app sends the full messages instead
+        raise HTTPException(503, f"Couldn't summarize: {e}")
 
 
 @app.post("/chat")
@@ -290,9 +312,13 @@ def chat(body: ChatIn, request: Request):
         raise HTTPException(429, "The guide has had a lot of questions from here this hour. Try again a bit later.")
     if not mailer.allowed("chat:everyone", CHAT_PER_DAY, 86400):
         raise HTTPException(429, "The guide has reached its daily limit. It will be back tomorrow.")
+    if sum(len(m.content) for m in body.messages) > MAX_CHAT_CHARS:
+        raise HTTPException(413, "This conversation is too long to send. Start a new conversation in this tab.")
     if guide is None:
         guide = Guide(engine)
     return StreamingResponse(
         guide.stream([m.model_dump() for m in body.messages], Profile(**body.profile.model_dump()), body.selected,
-                     body.location.model_dump() if body.location else None, body.plan),
+                     body.location.model_dump() if body.location else None, body.plan,
+                     {"other_plans": body.other_plans, "other_chats": dict(list(body.other_chats.items())[:10])},
+                     body.summary),
         media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

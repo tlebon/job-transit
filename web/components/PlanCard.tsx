@@ -9,9 +9,12 @@ import {
   removeStep,
   sessionsFrom,
   updateStep,
+  type ApplicationStatus,
   type Plan,
   type PlanStep,
+  type SavedOpening,
 } from "@/lib/plan";
+import { planName, setOpeningStatus } from "@/lib/workspace";
 import { EmailPlan } from "./EmailPlan";
 import { Markdown } from "./Markdown";
 
@@ -22,12 +25,13 @@ type Props = {
   onHelp: (step: PlanStep) => void; // ask the guide for resources and a first action
   onPractice: (step: PlanStep) => void; // a short quiz or exercise with the guide
   savedAt?: number; // when the guide last saved the plan: scroll it into view and highlight it
+  emailPlan?: Plan; // what reminders cover: all plans together (the server keeps one list per address)
 };
 
 const dateFormat = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short" });
 
 /** The saved plan: steps to tick off, edit or add to, with target dates and a calendar export for reminders. */
-export function PlanCard({ plan, onChange, onOpenStop, onHelp, onPractice, savedAt }: Props) {
+export function PlanCard({ plan, onChange, onOpenStop, onHelp, onPractice, savedAt, emailPlan }: Props) {
   const [editing, setEditing] = useState<string | null>(null);
   const card = useRef<HTMLDetailsElement>(null);
   const [fresh, setFresh] = useState(false);
@@ -46,7 +50,7 @@ export function PlanCard({ plan, onChange, onOpenStop, onHelp, onPractice, saved
   return (
     <details className={fresh ? "plan plan-fresh" : "plan"} open ref={card}>
       <summary className="plan-head">
-        <span className="plan-label">Your plan</span>
+        <span className="plan-label">Your plan{plan.name && plan.name !== plan.occupation ? `: ${planName(plan)}` : ""}</span>
         <span className="plan-title">{plan.occupation}</span>
         <span className="plan-progress">
           {done} of {total} done
@@ -127,8 +131,9 @@ export function PlanCard({ plan, onChange, onOpenStop, onHelp, onPractice, saved
           Add
         </button>
       </form>
+      <PlanOpenings plan={plan} onStatus={(url, status) => onChange(setOpeningStatus(plan, url, status))} />
       <div className="plan-actions">
-        <EmailPlan plan={plan} />
+        <EmailPlan plan={emailPlan ?? plan} />
         {open && (
           <button
             type="button"
@@ -233,5 +238,93 @@ function Practice({ step, onPractice, onLog }: { step: PlanStep; onPractice: () 
         </>
       )}
     </span>
+  );
+}
+
+
+const STATUS_LABEL: Record<ApplicationStatus, string> = {
+  found: "Found",
+  interested: "Interested",
+  applied: "Applied",
+  interview: "Interview",
+  offer: "Offer",
+  no: "Didn't work out",
+  hidden: "Hidden",
+};
+const TRACKED: ApplicationStatus[] = ["interested", "applied", "interview", "offer", "no"];
+
+/** Openings kept with the plan: the latest finds to save or hide, and the saved ones tracked through applying. */
+function PlanOpenings({ plan, onStatus }: { plan: Plan; onStatus: (url: string, status: ApplicationStatus) => void }) {
+  const all = plan.openings ?? [];
+  const saved = all.filter((o) => TRACKED.includes(o.status));
+  const found = all.filter((o) => o.status === "found");
+  if (!saved.length && !found.length) return null;
+  const line = (o: SavedOpening) => (
+    <span className="plan-opening-text">
+      <a href={o.url} target="_blank" rel="noreferrer" className="opening-title">
+        {o.title}
+      </a>
+      <span className="opening-meta">
+        {[o.company, o.where || o.location, o.pay].filter(Boolean).map((part, i) => (
+          <span key={i}>
+            {i > 0 && (
+              <span className="sep" aria-hidden>
+                ·
+              </span>
+            )}
+            {part}
+          </span>
+        ))}
+      </span>
+      {o.career_changer && <span className="badge badge-good">Open to career changers</span>}
+    </span>
+  );
+  return (
+    <section className="plan-openings">
+      {saved.length > 0 && (
+        <>
+          <h4>Applications</h4>
+          <ul>
+            {saved.map((o) => (
+              <li key={o.url}>
+                {line(o)}
+                <select
+                  className="field status-select"
+                  aria-label={`Status: ${o.title}`}
+                  value={o.status}
+                  onChange={(e) => onStatus(o.url, e.target.value as ApplicationStatus)}
+                >
+                  {TRACKED.map((s) => (
+                    <option key={s} value={s}>
+                      {STATUS_LABEL[s]}
+                    </option>
+                  ))}
+                </select>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      {found.length > 0 && (
+        <>
+          <h4>Openings found for this move</h4>
+          <ul>
+            {found.map((o) => (
+              <li key={o.url}>
+                {line(o)}
+                <span className="plan-opening-actions">
+                  <button type="button" className="linkish" onClick={() => onStatus(o.url, "interested")}>
+                    Save
+                  </button>
+                  <button type="button" className="linkish" onClick={() => onStatus(o.url, "hidden")}>
+                    Not for me
+                  </button>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </section>
   );
 }

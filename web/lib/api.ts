@@ -1,4 +1,4 @@
-import type { Plan, PlanAction } from "./plan";
+import type { ApplicationStatus, Plan, PlanAction, SavedOpening } from "./plan";
 import type { Country } from "./location";
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -260,6 +260,8 @@ export type ChatAction =
   | { type: "open_job"; census: number }
   | { type: "suggest_replies"; replies: string[] }
   | { type: "set_location"; places: { city: string; country: Country }[]; remote: boolean }
+  | { type: "openings_found"; census: number; openings: Omit<SavedOpening, "status" | "found">[] }
+  | { type: "track_application"; url: string; status: ApplicationStatus }
   | { type: "update_step"; title: string; resources: string[] }
   | { type: "log_practice"; title: string }
   | PlanAction
@@ -286,6 +288,7 @@ export async function streamChat(
     selected: number | null;
     location?: { city: string; country: string };
     plan?: Plan | null;
+    [extra: string]: unknown; // other_plans, other_chats
   },
   onEvent: (event: ChatEvent) => void,
   signal?: AbortSignal,

@@ -7,7 +7,10 @@ import { COUNTRIES, DEFAULT_LOCATION, loadSearch, SEARCH_EVENT, type Country, ty
 const NEAR = ["Elsewhere", "Remote", "In your city"];
 
 /** Live postings for one stop, from the job boards behind api/openings.py. Only runs when asked. */
-export function Openings({ census }: { census: number }) {
+type Found = { url: string; title: string; company: string; location: string; where?: string; pay?: string | null; career_changer?: boolean };
+
+/** onFound: the best few from each search, so a plan for this job can keep them. */
+export function Openings({ census, onFound }: { census: number; onFound?: (census: number, openings: Found[]) => void }) {
   const [where, setWhere] = useState<Location>(DEFAULT_LOCATION);
   const [result, setResult] = useState<Result | null>(null);
   const [busy, setBusy] = useState(false);
@@ -39,7 +42,22 @@ export function Openings({ census }: { census: number }) {
     setBusy(true);
     setError(null);
     try {
-      setResult(await api.openings(census, city, where.country, controller.current.signal));
+      const found = await api.openings(census, city, where.country, controller.current.signal);
+      setResult(found);
+      const best = [...found.openings]
+        .filter((o) => !o.us_only)
+        .sort((a, b) => b.near - a.near || Number(!!b.career_changer) - Number(!!a.career_changer))
+        .slice(0, 5)
+        .map((o) => ({
+          url: o.url,
+          title: o.title,
+          company: o.company,
+          location: o.location,
+          where: o.near === 2 ? `in ${found.city || city}` : o.near === 1 ? "remote" : "elsewhere",
+          pay: o.pay ?? null,
+          career_changer: !!o.career_changer,
+        }));
+      if (best.length) onFound?.(census, best);
     } catch (e) {
       if ((e as Error).name !== "AbortError") setError("Couldn’t search the job boards. Is the API running?");
     } finally {

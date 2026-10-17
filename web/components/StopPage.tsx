@@ -16,6 +16,7 @@ type Props = {
   hasEducation: boolean;
   onPlan: () => void;
   onClose: () => void;
+  onOpeningsFound?: (census: number, openings: { url: string; title: string; company: string; location: string }[]) => void;
 };
 
 const EDUCATION_NOTE: Record<string, string> = {
@@ -29,7 +30,7 @@ const EDUCATION_NOTE: Record<string, string> = {
   "No formal educational credential": "no formal credential",
 };
 
-export function StopPage({ stop, request, start, schooling, hasEducation, onPlan, onClose }: Props) {
+export function StopPage({ stop, request, start, schooling, hasEducation, onPlan, onClose, onOpeningsFound }: Props) {
   const [details, setDetails] = useState<StopDetails | null>(null);
   useEffect(() => {
     const controller = new AbortController();
@@ -203,7 +204,7 @@ export function StopPage({ stop, request, start, schooling, hasEducation, onPlan
         </dl>
       </section>
 
-      <Openings census={stop.census} />
+      <Openings census={stop.census} onFound={onOpeningsFound} />
 
       <div className="route-actions">
         <button type="button" className="action" onClick={onPlan}>

@@ -12,11 +12,36 @@ export type PlanStep = {
   sessions?: Session[];
   resources?: string[]; // Markdown links the guide found for this step ("Help me start"); replaced, not appended
 };
-export type Plan = { census: number; occupation: string; summary: string; created: string; steps: PlanStep[] };
+// A job posting kept with the plan for that move. found = the guide or the job page turned it up; the person can
+// save it (then track it through applying) or hide it.
+export type ApplicationStatus = "found" | "interested" | "applied" | "interview" | "offer" | "no" | "hidden";
+export type SavedOpening = {
+  url: string;
+  title: string;
+  company: string;
+  location: string;
+  where?: string; // "in Berlin", "remote", "elsewhere"
+  pay?: string | null;
+  career_changer?: boolean;
+  status: ApplicationStatus;
+  found: string; // YYYY-MM-DD
+  updated?: string;
+};
+export type Plan = {
+  id?: string; // set once there can be several plans (workspace.ts)
+  name?: string; // short tab name ("Carpentry"); the occupation title when the guide gave none
+  census: number;
+  occupation: string;
+  summary: string;
+  created: string;
+  steps: PlanStep[];
+  openings?: SavedOpening[];
+};
 export type PlanAction = {
   type: "save_plan";
   census: number;
   occupation: string;
+  name?: string;
   summary: string;
   steps: { title: string; detail: string; week: number; kind?: "learn" | "do" }[];
 };
@@ -100,6 +125,9 @@ export function planFromAction(action: PlanAction, previous: Plan | null): Plan 
   const newTitles = new Set(action.steps.map((s) => s.title.toLowerCase()));
   const keptMine = sameMove ? sameMove.steps.filter((s) => s.mine && !newTitles.has(s.title.toLowerCase())) : [];
   const plan: Plan = {
+    id: sameMove?.id,
+    name: action.name || sameMove?.name,
+    openings: sameMove?.openings,
     census: action.census,
     occupation: action.occupation,
     summary: action.summary,

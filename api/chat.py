@@ -23,6 +23,7 @@ load_dotenv()
 CHAT_MODEL = os.getenv("CHAT_MODEL", "claude-sonnet-5-5")
 MAX_TOOL_ROUNDS = 6
 GOALS = ["pay", "stability", "less_ai", "passion"]
+TRACK_STATUSES = ["interested", "applied", "interview", "offer", "no"]   # web/lib/plan.ts ApplicationStatus, minus found/hidden
 
 SYSTEM = """You are the guide in Job Transit, an app that helps people plan a career change. The app shows a map \
 ("Job City") where every block is an occupation and neighbours need similar skills; the person's next jobs are \
@@ -53,6 +54,13 @@ moving to Germany often don't speak it yet. Leave out us_only postings unless th
 (pay where they live, courses nearby): which city or cities, and whether remote work is fine. Offer likely answers \
 as suggestions ("Berlin", "Berlin or remote", "Remote anywhere in Europe"). Save the answer with set_location, then \
 carry on with what they asked.
+- The app keeps one plan per move, each with its own conversation, plus Explore for everything else. In a plan's \
+conversation, stay with that move. If they want to plan a different move, you can save_plan for it: it opens in \
+its own tab, so tell them that. In Explore, help them compare moves and start plans. You see short summaries of \
+their other plans; when they refer to something said in another conversation, read it with read_chat.
+- The best few openings from find_openings are kept in the plan for that job, where they can save them and track \
+applying. When they tell you they applied, had an interview, got an offer or heard no for one of those, update it \
+with track_application.
 - A job marked your_title is one of the person's own job titles, not a move.
 - Before the first plan for a move, if you don't know it yet, ask how much time they can give it (hours a week) and \
 when they would like to have switched; offer typical answers as suggestions ("A few hours a week", "Evenings and \
@@ -159,12 +167,15 @@ TOOLS = [
     },
     {
         "name": "save_plan",
-        "description": ("App action: save a step-by-step plan for moving to one occupation. It appears in the app as a "
-                        "to-do list with dates, replacing any earlier plan."),
+        "description": ("App action: save a step-by-step plan for moving to one occupation. Each occupation has one "
+                        "plan with its own tab and conversation: saving for an occupation that has a plan revises it; "
+                        "a new occupation opens a new tab."),
         "input_schema": {
             "type": "object",
             "properties": {
                 "census": {"type": "integer", "description": "The destination's census code."},
+                "name": {"type": "string", "description": ("Short tab name for the plan in their words, 1-3 words "
+                                                           "(\"Carpentry\", \"Comedy\", \"Data science\").")},
                 "summary": {"type": "string", "description": "One sentence: the move and the main thing to close."},
                 "steps": {
                     "type": "array", "minItems": 2, "maxItems": 8,
@@ -184,6 +195,27 @@ TOOLS = [
                 },
             },
             "required": ["census", "summary", "steps"],
+        },
+    },
+    {
+        "name": "read_chat",
+        "description": "TODO (Tim): what read_chat does and when Claude should use it.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"plan": {"type": "string", "description": "TODO (Tim)"}},
+            "required": ["plan"],
+        },
+    },
+    {
+        "name": "track_application",
+        "description": "TODO (Tim): what track_application does and when Claude should use it.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "TODO (Tim)"},
+                "status": {"type": "string", "enum": ["TODO (Tim): TRACK_STATUSES"]},
+            },
+            "required": ["url", "status"],
         },
     },
     {
@@ -266,7 +298,36 @@ def tools_for(location: dict | None) -> list[dict]:
     if location and location.get("city"):
         search["user_location"] = {"type": "approximate", "city": location["city"],
                                    "country": (location.get("country") or "de").upper()}
-    return TOOLS + [search]
+    # prompt caching: tools up to here are the same for everyone, so they're cached (read back at a tenth of the cost)
+    return TOOLS[:-1] + [{**TOOLS[-1], "cache_control": {"type": "ephemeral"}}, search]
+
+
+def system_blocks(context: str, summary: str | None = None) -> list[dict]:
+    """The instructions (the same for everyone: cached) and then this person's situation (changes every time)."""
+    rules, _ = SYSTEM.split("{context}")
+    situation = context
+    if summary:
+        situation += ("\n\nEarlier in this conversation (summarized; the messages after it follow in full):\n" + summary)
+    return [{"type": "text", "text": rules, "cache_control": {"type": "ephemeral"}}, {"type": "text", "text": situation}]
+
+
+COMPACT_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-haiku-5-5")
+
+
+def summarize(messages: list[dict], previous: str | None = None) -> str:
+    """A short summary of the older part of a conversation, so later messages don't resend all of it."""
+    transcript = "\n\n".join(f"{m['role'].upper()}: {m['content'][:6000]}" for m in messages)
+    reply = anthropic.Anthropic().messages.create(
+        model=COMPACT_MODEL, max_tokens=700,
+        messages=[{"role": "user", "content": (
+            "This is the earlier part of a conversation between a career-change guide (ASSISTANT) and a person "
+            "(USER). Write the summary the guide will continue from, in under 250 words: what the person told "
+            "about themselves and wants, decisions made, plans or steps agreed, postings, courses and links "
+            "mentioned (keep their URLs), and questions still open. Plain sentences, no preamble."
+            + (f"\n\nSummary of what came before:\n{previous}" if previous else "")
+            + f"\n\nConversation:\n{transcript}")}],
+    )
+    return reply.content[0].text.strip()
 
 
 TOOL_LABELS = {
@@ -281,6 +342,8 @@ TOOL_LABELS = {
     "open_job": lambda a: "Opening the job on the map",
     "update_profile": lambda a: "Updating your profile",
     "set_location": lambda a: "Saving where you're looking",
+    "read_chat": lambda a: f"Reading your {a.get('plan', 'other')} conversation",
+    "track_application": lambda a: "Updating your applications",
 }
 
 
@@ -304,7 +367,8 @@ class Guide:
         self.client = anthropic.Anthropic()
 
     # ---- context and tools -----------------------------------------------------------------
-    def context(self, profile: Profile, selected: int | None, location: dict | None = None, plan: dict | None = None) -> str:
+    def context(self, profile: Profile, selected: int | None, location: dict | None = None, plan: dict | None = None,
+                workspace: dict | None = None) -> str:
         e = self.engine
         lines = []
         if profile.job is not None and profile.job in e.position:
@@ -343,7 +407,20 @@ class Guide:
                                 + (f", next {left[0].get('due')}" if left else ""))
                 return (f"[{'; '.join(tags)}] " if tags else "") + str(st.get("title", ""))
             steps = "; ".join(describe(st) for st in plan["steps"][:12])
-            lines.append(f"Their saved plan, toward {plan.get('occupation', '?')} (census {plan.get('census')}): {steps}")
+            lines.append(f"This conversation belongs to their plan \"{plan.get('name') or plan.get('occupation')}\", "
+                         f"toward {plan.get('occupation', '?')} (census {plan.get('census')}): {steps}")
+            saved = [o for o in plan.get("openings") or [] if o.get("status") not in ("found", "hidden")]
+            if saved:
+                lines.append("Openings they saved for it: " + "; ".join(
+                    f"{o.get('title')} at {o.get('company')} [{o.get('status')}] {o.get('url')}" for o in saved[:10]))
+        else:
+            lines.append("This is the Explore conversation, not tied to one plan.")
+        others = (workspace or {}).get("other_plans") or []
+        if others:
+            lines.append("Their other plans (each has its own conversation): " + "; ".join(
+                f"{o.get('name')} (toward {o.get('occupation')}, census {o.get('census')}, "
+                f"{o.get('steps_done')} of {o.get('steps')} steps done, {o.get('saved_openings', 0)} saved openings)"
+                for o in others))
         if location:
             places = location.get("places") or [{"city": location["city"], "country": location["country"]}]
             where = "; ".join(f"{p['city']} ({p['country']})" for p in places)
@@ -356,7 +433,8 @@ class Guide:
             lines.append(f"They are looking at the job page for: {e.census.at[selected, 'title']} (census {selected})")
         return "\n".join(lines) or "They haven't told the app anything yet."
 
-    def run_tool(self, name: str, args: dict, profile: Profile, location: dict | None = None):
+    def run_tool(self, name: str, args: dict, profile: Profile, location: dict | None = None,
+                 workspace: dict | None = None):
         """Returns (result for Claude, app action or None)."""
         e = self.engine
         if name == "search_jobs":
@@ -393,7 +471,13 @@ class Guide:
                 places = [{"city": args["city"], "country": args.get("country") or where["country"]}]
             else:
                 places = (where.get("places") or [{"city": where["city"], "country": where["country"]}])[:3]
-            return _openings_for_places(e, code, places), None
+            found = _openings_for_places(e, code, places)
+            # the app keeps the best few with the plan for this job, if there is one (openings_found)
+            best = sorted(found["openings"], key=lambda o: (not o.get("where", "").startswith("in "),
+                                                             not o.get("career_changer")))[:5]
+            keep = [{k: o.get(k) for k in ("url", "title", "company", "location", "where", "pay", "career_changer")}
+                    for o in best]
+            return found, ({"type": "openings_found", "census": code, "openings": keep} if keep else None)
         if name == "read_posting":   # Tim: the function is in api/openings.py
             return read_posting(args.get("url", "")), None
         if name == "save_plan":
@@ -408,7 +492,18 @@ class Guide:
                 return {"error": "a plan needs at least 2 steps"}, None
             return {"ok": True, "saved_steps": len(steps)}, {
                 "type": "save_plan", "census": code, "occupation": e.census.at[code, "title"],
-                "summary": str(args.get("summary", ""))[:300], "steps": steps}
+                "summary": str(args.get("summary", ""))[:300], "steps": steps,
+                "name": str(args.get("name") or "").strip()[:30] or None}
+        if name == "read_chat":
+            # Tim: return the recent messages of another conversation (workspace["other_chats"] maps a plan name,
+            # or "Explore", to [{role, content}, ...]). Match args["plan"] loosely (case, partial name); if nothing
+            # matches, return an error that lists the names there are, so Claude can try again.
+            raise NotImplementedError("TODO (Tim): read_chat")
+        if name == "track_application":
+            # Tim: an app action like save_plan. args: url (of a posting saved with the plan), status (one of
+            # TRACK_STATUSES). Check both, then return a result for Claude and the action for the app:
+            # ({"ok": True, ...}, {"type": "track_application", "url": ..., "status": ...})
+            raise NotImplementedError("TODO (Tim): track_application")
         if name == "update_step":
             title = str(args.get("title", "")).strip()
             resources = [str(r).strip()[:300] for r in (args.get("resources") or []) if str(r).strip()][:5]
@@ -445,13 +540,13 @@ class Guide:
 
     # ---- the conversation ------------------------------------------------------------------
     def stream(self, messages: list[dict], profile: Profile, selected: int | None = None, location: dict | None = None,
-               plan: dict | None = None):
+               plan: dict | None = None, workspace: dict | None = None, summary: str | None = None):
         """Yields server-sent-event lines. `messages`: [{role: user|assistant, content: str}]."""
         def event(payload):
             return f"data: {_json(payload)}\n\n"
 
         try:
-            system = SYSTEM.format(context=self.context(profile, selected, location, plan))
+            system = system_blocks(self.context(profile, selected, location, plan, workspace), summary)
             convo = [{"role": m["role"], "content": m["content"]} for m in messages if m.get("content")]
             wrote = False   # has text arrived since the last round of real tools? An answer can't end without it.
             for _ in range(MAX_TOOL_ROUNDS):
@@ -488,7 +583,7 @@ class Guide:
                         label = TOOL_LABELS.get(block.name, lambda a: block.name)(block.input or {})
                         yield event({"type": "tool", "label": label})
                     try:
-                        result, action = self.run_tool(block.name, block.input or {}, profile, location)
+                        result, action = self.run_tool(block.name, block.input or {}, profile, location, workspace)
                     except Exception as error:  # report to Claude, keep going
                         result, action = {"error": str(error)}, None
                     if action:
