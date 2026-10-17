@@ -43,6 +43,15 @@ Show a few concrete postings with their links. For counts, use by_place (in thei
 total_matched alone. If a source wasn't searched, pass on its reason (for example "still loading after a restart, try \
 again in a few minutes"). Use the person's city unless they ask about another place.
 - A stop marked your_title is one of the person's own job titles, not a move.
+- Before the first plan for a move, if you don't know it yet, ask how much time they can give it (hours a week) and \
+when they would like to have switched; offer typical answers as suggestions ("A few hours a week", "Evenings and \
+weekends", "I can study full-time"). Base every step's week on their answer, say the dates are a suggestion, and \
+never invent a timeline they didn't agree to.
+- Never quote the 1-5 skill ratings (like "needed 4.7, you 1.3") to the person: they are abstract. Say the gap in \
+words ("you'd be starting from scratch on building and construction") and turn it into what to learn or practise.
+- Pay, growth and AI figures come from the US Bureau of Labor Statistics (BLS). They are good for comparing jobs with \
+each other (which pays more, which is growing), so use them that way and always say they are US figures. Don't present \
+a US salary as what they would earn where they live; if local pay matters, look it up with web_search.
 - When they ask for a plan for a move: call stop_details for that stop first, then save_plan with 3 to 6 steps. \
 Steps must be concrete and specific to this person and this job: name the actual skills from the gaps and tasks, \
 what to build or learn and how to show it, who to talk to, and when to start applying. Give each step a realistic \
@@ -64,7 +73,8 @@ one question or give one small exercise at a time, wait for their answer, give b
 difficulty; 3 to 5 questions in total, mixing recall with applying it. Base it on what that step is about and what \
 they have practised before. When the session is done, call log_practice with the step's title and say when the \
 next session is due. If they only want to mark a session as done, call log_practice.
-- End every reply by calling suggest_replies with 2 or 3 short things the person might say next, in their own voice \
+- End every reply by calling suggest_replies, on its own, after you have written your final text: never in the \
+same step as another tool. Give it 2 or 3 short things the person might say next, in their own voice \
 ("Make me a plan for this", "What about remote roles?"). If you asked them a question, offer likely answers. If \
 something important about them is still unknown (what they want from a change, years of experience, their city, \
 what they enjoy), make one suggestion a quick way to tell you ("I care most about pay").
@@ -206,7 +216,6 @@ TOOLS = [
     },
 ]
 
-APP_ACTIONS = {"suggest_replies", "update_step", "log_practice", "save_plan", "open_stop", "update_profile"}
 WEB_SEARCH_MAX_USES = 3   # per request round; $10 per 1,000 searches plus the result tokens
 
 
@@ -419,9 +428,9 @@ class Guide:
                         if action["type"] == "update_profile":   # later tool calls see the change
                             profile = _apply(profile, action)
                     results.append({"type": "tool_result", "tool_use_id": block.id, "content": _json(result)})
-                # suggest_replies comes last: with only app actions beside it, the reply is finished and another
-                # round would just repeat itself. Data tools (search, details, openings) still need their answer.
-                if "suggest_replies" in called and called <= APP_ACTIONS:
+                # A round that only suggests replies ends the answer. Anything else (even an app action like
+                # save_plan) gets its result back, so Claude can tell the person what it did.
+                if called == {"suggest_replies"}:
                     break
                 convo.append({"role": "user", "content": results})
             yield event({"type": "done"})

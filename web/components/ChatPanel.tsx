@@ -6,7 +6,15 @@ import type { Plan } from "@/lib/plan";
 import { streamChat, type ChatAction, type ChatMessage, type Profile } from "@/lib/api";
 import { Markdown } from "./Markdown";
 
-export type Turn = ChatMessage & { status?: string; error?: string; suggestions?: string[] };
+// failed: a question that never reached the guide (API down, network); shown with Retry, left out of the history
+// stopped: the person cancelled the answer part-way
+export type Turn = ChatMessage & {
+  status?: string;
+  error?: string;
+  suggestions?: string[];
+  failed?: boolean;
+  stopped?: boolean;
+};
 
 const STARTERS = [
   "Where could I go that pays more?",
@@ -39,6 +47,12 @@ export function ChatPanel({ turns, setTurns, profile, selected, onAction, pendin
   }, [turns]);
   useEffect(() => () => controller.current?.abort(), []);
   useEffect(() => {
+    if (!busy) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && controller.current?.abort();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [busy]);
+  useEffect(() => {
     if (!pendingQuestion) {
       input.current?.focus();
       return;
@@ -63,20 +77,47 @@ export function ChatPanel({ turns, setTurns, profile, selected, onAction, pendin
 
   const update = (fn: (last: Turn) => Turn) => setTurns((t) => [...t.slice(0, -1), fn(t[t.length - 1])]);
 
-  async function send(text: string) {
+  /** The question didn't get an answer: drop the empty reply and mark the question as not sent. If part of an
+   * answer already arrived, keep it and show the error under it instead. */
+  const fail = (reason: string) =>
+    setTurns((t) => {
+      const last = t[t.length - 1];
+      if (last?.role === "assistant" && last.content) return [...t.slice(0, -1), { ...last, error: reason, status: undefined }];
+      const rest = last?.role === "assistant" ? t.slice(0, -1) : t;
+      return rest.map((turn, i) => (i === rest.length - 1 ? { ...turn, failed: true, error: reason } : turn));
+    });
+
+  /** Cancelled with Stop or Esc. Nothing arrived yet: take the question back into the input to edit or resend.
+   * Part of an answer arrived: keep it, marked as stopped. */
+  const stopped = (question: string, answered: boolean) => {
+    if (answered) {
+      update((last) => ({ ...last, stopped: true, status: undefined }));
+    } else {
+      setTurns((t) => (t[t.length - 1]?.role === "assistant" ? t.slice(0, -2) : t.slice(0, -1)));
+      setDraft(question);
+    }
+  };
+
+  async function send(text: string, replacing?: number) {
     const question = text.trim();
     if (!question || busy) return;
-    const history: ChatMessage[] = [...turns.map(({ role, content }) => ({ role, content })), { role: "user", content: question }];
-    setTurns(() => [...history, { role: "assistant", content: "" }]);
+    const kept = turns.filter((_, i) => i !== replacing);
+    const history: ChatMessage[] = [
+      ...kept.filter((t) => !t.failed && t.content).map(({ role, content }) => ({ role, content })),
+      { role: "user", content: question },
+    ];
+    setTurns(() => [...kept, { role: "user", content: question }, { role: "assistant", content: "" }]);
     setDraft("");
     setBusy(true);
     controller.current = new AbortController();
     let afterTool = false;
+    let answered = false; // has any of the answer arrived (decides what Stop does)
     try {
       await streamChat(
-        { messages: history.filter((m) => m.content), profile, selected, location: loadLocation(), plan },
+        { messages: history, profile, selected, location: loadLocation(), plan },
         (event) => {
           if (event.type === "text") {
+            answered = true;
             const gap = afterTool ? "\n\n" : "";
             afterTool = false;
             update((last) => ({ ...last, content: last.content + (last.content ? gap : "") + event.text, status: undefined }));
@@ -88,15 +129,19 @@ export function ChatPanel({ turns, setTurns, profile, selected, onAction, pendin
             if (action.type === "suggest_replies") update((last) => ({ ...last, suggestions: action.replies }));
             else onAction(action);
           } else if (event.type === "error") {
-            update((last) => ({ ...last, error: event.message, status: undefined }));
+            fail(event.message);
           }
         },
         controller.current.signal,
       );
     } catch (e) {
-      if ((e as Error).name !== "AbortError") update((last) => ({ ...last, error: `Couldn’t reach the guide: ${(e as Error).message}` }));
+      if ((e as Error).name === "AbortError") stopped(question, answered);
+      else fail("Couldn’t reach the guide. Check your connection or try again in a moment.");
     } finally {
-      update((last) => ({ ...last, status: undefined }));
+      setTurns((t) => {
+        const last = t[t.length - 1];
+        return last?.role === "assistant" ? [...t.slice(0, -1), { ...last, status: undefined }] : t;
+      });
       setBusy(false);
     }
   }
@@ -126,13 +171,25 @@ export function ChatPanel({ turns, setTurns, profile, selected, onAction, pendin
           </div>
         )}
         {turns.map((t, i) => (
-          <div key={i} className={`chat-turn chat-${t.role}`}>
+          <div key={i} className={`chat-turn chat-${t.role}${t.failed ? " chat-failed" : ""}`}>
             {t.role === "assistant" ? <Markdown text={t.content} /> : <p>{t.content}</p>}
+            {t.failed && (
+              <p className="chat-failed-note">
+                Not sent. {t.error}{" "}
+                <button type="button" className="linkish" disabled={busy} onClick={() => send(t.content, i)}>
+                  Retry
+                </button>{" "}
+                <button type="button" className="linkish" onClick={() => setTurns((all) => all.filter((_, j) => j !== i))}>
+                  Remove
+                </button>
+              </p>
+            )}
             {t.status && <p className="chat-status">{t.status}…</p>}
             {t.role === "assistant" && !t.content && !t.status && !t.error && busy && i === turns.length - 1 && (
               <p className="chat-status">Thinking…</p>
             )}
-            {t.error && <p className="error">{t.error}</p>}
+            {t.error && !t.failed && <p className="error">{t.error}</p>}
+            {t.stopped && <p className="chat-status">Stopped.</p>}
             {t.suggestions && t.suggestions.length > 0 && !busy && i === turns.length - 1 && (
               <div className="chat-suggestions" aria-label="Suggested replies">
                 {t.suggestions.map((s) => (
@@ -167,7 +224,7 @@ export function ChatPanel({ turns, setTurns, profile, selected, onAction, pendin
           }}
         />
         {busy ? (
-          <button type="button" className="action" onClick={() => controller.current?.abort()}>
+          <button type="button" className="action" title="Stop (Esc)" onClick={() => controller.current?.abort()}>
             Stop
           </button>
         ) : (

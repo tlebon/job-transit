@@ -481,17 +481,21 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .plan-progress { grid-column: 2; grid-row: 1 / span 2; align-self: center; color: var(--ink-2); font-size: 14px; white-space: nowrap; }
 .plan-summary { margin: 8px 0 4px; color: var(--ink-2); font-size: 14px; }
 .plan-steps { list-style: none; margin: 6px 0 0; padding: 0; }
-.plan-steps li { border-top: 1px solid var(--rule-soft); }
-.plan-steps li { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 8px; padding: 9px 0; }
+.plan-steps > li { border-top: 1px solid var(--rule-soft); }
+.plan-steps > li { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 8px; padding: 9px 0; }
 .plan-steps input[type="checkbox"] { width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--ink); cursor: pointer; }
 .plan-step { display: flex; flex-direction: column; gap: 2px; }
 .plan-step-title { font-weight: 700; }
 .plan-step-detail { color: var(--ink-2); font-size: 14px; }
-.plan-step-detail p { margin: 0; }
+.plan-step-detail p { margin: 0 0 4px; }
+.plan-step-detail ul, .plan-step-detail ol { margin: 2px 0 6px; padding-left: 18px; }
+.plan-step-detail ul { list-style: disc; }
+.plan-step-detail ol { list-style: decimal; }
+.plan-step-detail li { margin: 2px 0; }
 .plan-step-detail a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
 .plan-step-due { color: var(--ink-3); font-size: 13px; display: flex; gap: 10px; align-items: baseline; }
 .plan-edit { font-size: 13px; }
-.plan-steps li[data-done="true"] .plan-step-title { text-decoration: line-through; color: var(--ink-3); }
+.plan-steps > li[data-done="true"] .plan-step-title { text-decoration: line-through; color: var(--ink-3); }
 .plan-bar { height: 4px; border-radius: 2px; background: var(--rule-soft); margin: 8px 0 2px; overflow: hidden; }
 .plan-bar span { display: block; height: 100%; background: var(--signal); transition: width 0.3s ease; }
 .plan-add { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; padding: 10px 0; border-top: 1px solid var(--rule-soft); }
