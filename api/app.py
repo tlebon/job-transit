@@ -1,4 +1,5 @@
 """Job Transit API.  Run from the repo root:  uv run uvicorn api.app:app --reload --port 8000"""
+import os
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Request
@@ -118,9 +119,27 @@ class CvIn(BaseModel):
     pdf_base64: str | None = None
 
 
+# Claude costs money per call, so the endpoints that call it are rate limited: per address (generous, since a
+# whole Demo Day room shares one wifi address) and a daily cap for everyone together.
+CHAT_PER_HOUR = int(os.getenv("CHAT_PER_HOUR", "150"))
+CHAT_PER_DAY = int(os.getenv("CHAT_PER_DAY", "2000"))
+CV_PER_HOUR = int(os.getenv("CV_PER_HOUR", "20"))
+
+
+def client_ip(request: Request) -> str:
+    """The caller's address. Behind Railway's proxy request.client is the proxy, so use the address it appended
+    (the last X-Forwarded-For entry; earlier ones come from the client and can be made up)."""
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[-1].strip()
+    return request.client.host if request.client else "?"
+
+
 @app.post("/cv")
-def cv(body: CvIn):
+def cv(body: CvIn, request: Request):
     """Read a CV (PDF or text) and return planner inputs the person can review before applying."""
+    if not mailer.allowed(f"cv:{client_ip(request)}", CV_PER_HOUR, 3600):
+        raise HTTPException(429, "Too many CVs from here for now. Try again in an hour.")
     try:
         record = read_cv(engine.meta["items"], engine.meta["education_ladder"], body.text, body.pdf_base64)
     except ValueError as e:
@@ -185,8 +204,7 @@ def email_plan(body: EmailPlanIn, request: Request):
     email = body.email.strip().lower()
     if not mailer.valid_email(email):
         raise HTTPException(400, "That doesn't look like an email address.")
-    client = request.client.host if request.client else "?"
-    if not (mailer.allowed(f"ip:{client}", 5, 3600) and mailer.allowed(f"to:{email}", 5, 86400)):
+    if not (mailer.allowed(f"ip:{client_ip(request)}", 5, 3600) and mailer.allowed(f"to:{email}", 5, 86400)):
         raise HTTPException(429, "Too many emails for now. Try again later.")
     token = mailer.subscribe(email, body.plan) if body.remind else None
     subject, body_html, body_text = mailer.plan_email(body.plan, token)
@@ -243,9 +261,13 @@ class ChatIn(BaseModel):
 
 
 @app.post("/chat")
-def chat(body: ChatIn):
+def chat(body: ChatIn, request: Request):
     """The guide: streams server-sent events (see api/chat.py)."""
     global guide
+    if not mailer.allowed(f"chat:{client_ip(request)}", CHAT_PER_HOUR, 3600):
+        raise HTTPException(429, "The guide has had a lot of questions from here this hour. Try again a bit later.")
+    if not mailer.allowed("chat:everyone", CHAT_PER_DAY, 86400):
+        raise HTTPException(429, "The guide has reached its daily limit. It will be back tomorrow.")
     if guide is None:
         guide = Guide(engine)
     return StreamingResponse(

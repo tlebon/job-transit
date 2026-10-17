@@ -98,9 +98,21 @@ export type CityMap = {
 
 export type SortKey = "best" | "reachable" | "appealing";
 
+/** The API's own message for a failed request ({"detail": "..."} from FastAPI), else the status and body. */
+async function failure(res: Response): Promise<Error> {
+  const text = await res.text();
+  try {
+    const detail = (JSON.parse(text) as { detail?: unknown }).detail;
+    if (typeof detail === "string") return new Error(detail);
+  } catch {
+    // not JSON
+  }
+  return new Error(`${res.status} ${text}`);
+}
+
 async function getJson<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, init);
-  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+  if (!res.ok) throw await failure(res);
   return res.json() as Promise<T>;
 }
 
@@ -262,7 +274,7 @@ export async function streamChat(
     body: JSON.stringify(body),
     signal,
   });
-  if (!res.ok || !res.body) throw new Error(`${res.status} ${await res.text()}`);
+  if (!res.ok || !res.body) throw await failure(res);
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
