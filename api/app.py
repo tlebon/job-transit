@@ -262,9 +262,16 @@ class ChatMessage(BaseModel):
     content: str = Field(max_length=8000)
 
 
-class Location(BaseModel):
+class Place(BaseModel):
     city: str = Field(default="Berlin", max_length=80)
     country: Country = "de"
+
+
+class Location(Place):
+    """Where the person is looking for work. city/country = the first place, kept for older clients."""
+    places: list[Place] = Field(default_factory=list, max_length=5)
+    remote: bool = False
+    confirmed: bool = True   # False: the app's default guess (Berlin), not something they said
 
 
 class ChatIn(BaseModel):

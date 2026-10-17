@@ -10,7 +10,8 @@ import { GOALS, GoalPicker } from "@/components/GoalPicker";
 import { AskBar } from "@/components/AskBar";
 import { ChatPanel, type Turn } from "@/components/ChatPanel";
 import { AboutData } from "@/components/AboutData";
-import { loadLocation } from "@/lib/location";
+import { DEFAULT_SEARCH, loadLocation, loadSearch, placeName, saveSearch, SEARCH_EVENT, type Search } from "@/lib/location";
+import { LocationEditor } from "@/components/LocationEditor";
 import { ChipGroups } from "@/components/ChipGroups";
 import { ExperiencePicker } from "@/components/ExperiencePicker";
 import { Logo } from "@/components/Logo";
@@ -71,6 +72,17 @@ export default function Home() {
   const [plan, setPlanState] = useState<Plan | null>(null);
   const [planSavedAt, setPlanSavedAt] = useState<number | undefined>(undefined);
   const [aboutOpen, setAboutOpen] = useState(false);
+  const [search, setSearchState] = useState<Search>(DEFAULT_SEARCH);
+  useEffect(() => {
+    const sync = () => setSearchState(loadSearch());
+    sync();
+    window.addEventListener(SEARCH_EVENT, sync);
+    return () => window.removeEventListener(SEARCH_EVENT, sync);
+  }, []);
+  const setSearch = (next: Search) => {
+    setSearchState(next);
+    saveSearch(next);
+  };
   // their top next jobs: fetch openings in the background once per new list, so a first search is a lookup
   const warmed = useRef("");
   const warmOpenings = (codes: number[]) => {
@@ -217,6 +229,10 @@ export default function Home() {
   const [viewing, setViewing] = useState<number | null>(null);
   const [focus, setFocus] = useState<{ census: number; at: number } | null>(null);
   const onChatAction = (action: ChatAction) => {
+    if (action.type === "set_location") {
+      setSearch({ places: action.places, remote: action.remote, confirmed: true });
+      return;
+    }
     if (action.type === "save_plan") {
       setPlan(planFromAction(action, plan));
       setPlanSavedAt(Date.now());
@@ -424,7 +440,7 @@ export default function Home() {
                     <span className="leg-line">
                       {titles.length > 0 && <strong>{titles.map((t) => t.label).join(" · ")}</strong>}
                       {profile.experience_years !== null &&
-                        `${titles.length > 0 ? " · " : ""}${yearsText(profile.experience_years)}`}
+                        `${titles.length > 0 ? " ·\u00a0" : ""}${yearsText(profile.experience_years)}`}
                     </span>
                   )}
                   {profile.description && <span className="clamp">{profile.description}</span>}
@@ -510,6 +526,20 @@ export default function Home() {
                 </option>
               ))}
             </select>
+          </Leg>
+
+          <Leg
+            title="Where you're looking"
+            value={
+              <span className="leg-line">
+                {search.places.map(placeName).join(" · ")}
+                {search.remote && " · open to remote"}
+                {!search.confirmed && " (a guess: is this right?)"}
+              </span>
+            }
+            empty="Cities you'd work in, and whether remote is fine"
+          >
+            <LocationEditor search={search} onChange={setSearch} />
           </Leg>
           </div>
 

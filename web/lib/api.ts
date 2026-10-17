@@ -1,4 +1,5 @@
 import type { Plan, PlanAction } from "./plan";
+import type { Country } from "./location";
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -258,6 +259,7 @@ export type ChatMessage = { role: "user" | "assistant"; content: string };
 export type ChatAction =
   | { type: "open_job"; census: number }
   | { type: "suggest_replies"; replies: string[] }
+  | { type: "set_location"; places: { city: string; country: Country }[]; remote: boolean }
   | { type: "update_step"; title: string; resources: string[] }
   | { type: "log_practice"; title: string }
   | PlanAction

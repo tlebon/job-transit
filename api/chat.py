@@ -42,12 +42,17 @@ consultant) only exist inside broad census groups; pay and growth are US figures
 AI company boards) for one occupation. Bundesagentur postings come with a pay range in euros and say whether the ad \
 is open to career changers (career_changer, "Quereinstieg"): mention both, since for someone changing careers an ad \
 that welcomes career changers is the best place to start. \
-Show a few concrete postings with their links. For counts, use by_place (in their city / remote / elsewhere), not \
-total_matched alone. If a source wasn't searched, pass on its reason. A source "still collecting" is fetching this \
+Show a few concrete postings with their links. It searches all the places they're looking in at once. For counts, use by_place \
+(in their places / remote / elsewhere), not total_matched alone; if they're open to remote, remote postings are a \
+match too. If a source wasn't searched, pass on its reason. A source "still collecting" is fetching this \
 job's postings right now: say the results are incomplete (especially when few are in their city), that a second \
 search in a minute will include it, and offer "Check the openings again" as a suggested reply. Use the person's city unless they ask about another place. Each opening says the \
 language it is written in and whether it asks for good German (needs_german): say so next to it, since people \
 moving to Germany often don't speak it yet. Leave out us_only postings unless they live in the Americas.
+- If where they're looking for work is NOT CONFIRMED, ask before the first openings search or anything local \
+(pay where they live, courses nearby): which city or cities, and whether remote work is fine. Offer likely answers \
+as suggestions ("Berlin", "Berlin or remote", "Remote anywhere in Europe"). Save the answer with set_location, then \
+carry on with what they asked.
 - A job marked your_title is one of the person's own job titles, not a move.
 - Before the first plan for a move, if you don't know it yet, ask how much time they can give it (hours a week) and \
 when they would like to have switched; offer typical answers as suggestions ("A few hours a week", "Evenings and \
@@ -219,6 +224,23 @@ TOOLS = [
         "input_schema": {"type": "object", "properties": {"census": {"type": "integer"}}, "required": ["census"]},
     },
     {
+        "name": "set_location",
+        "description": ("App action: save where the person is looking for work: one or more places, and whether "
+                        "remote work is fine. Only what they told you. Replaces the saved places."),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "places": {"type": "array", "minItems": 1, "maxItems": 5, "items": {
+                    "type": "object",
+                    "properties": {"city": {"type": "string"},
+                                   "country": {"type": "string", "enum": [c for c, _ in COUNTRIES]}},
+                    "required": ["city", "country"]}},
+                "remote": {"type": "boolean", "description": "Open to remote work."},
+            },
+            "required": ["places", "remote"],
+        },
+    },
+    {
         "name": "update_profile",
         "description": ("App action: change the person's profile in the app. Only for things they told you or "
                         "agreed to. Fields left out stay as they are."),
@@ -258,6 +280,7 @@ TOOL_LABELS = {
     "read_posting": lambda a: "Reading the posting",
     "open_job": lambda a: "Opening the job on the map",
     "update_profile": lambda a: "Updating your profile",
+    "set_location": lambda a: "Saving where you're looking",
 }
 
 
@@ -322,7 +345,13 @@ class Guide:
             steps = "; ".join(describe(st) for st in plan["steps"][:12])
             lines.append(f"Their saved plan, toward {plan.get('occupation', '?')} (census {plan.get('census')}): {steps}")
         if location:
-            lines.append(f"Looking for work in: {location['city']} ({location['country']})")
+            places = location.get("places") or [{"city": location["city"], "country": location["country"]}]
+            where = "; ".join(f"{p['city']} ({p['country']})" for p in places)
+            if location.get("confirmed", True):
+                lines.append(f"Looking for work in: {where}" + ("; also open to remote work" if location.get("remote") else
+                                                                 "; remote not mentioned"))
+            else:
+                lines.append(f"Where they're looking for work: NOT CONFIRMED (the app assumed {where})")
         if selected is not None and selected in e.position:
             lines.append(f"They are looking at the job page for: {e.census.at[selected, 'title']} (census {selected})")
         return "\n".join(lines) or "They haven't told the app anything yet."
@@ -360,10 +389,11 @@ class Guide:
             if code not in e.position:
                 return {"error": "unknown census code; use search_jobs"}, None
             where = location or {"city": "Berlin", "country": "de"}
-            found = find_openings(e, code, args.get("city") or where["city"], args.get("country") or where["country"], limit=10)
-            for p in found["openings"]:
-                p["where"] = ["elsewhere", "remote", "in their city"][p.pop("near")]
-            return found, None
+            if args.get("city"):
+                places = [{"city": args["city"], "country": args.get("country") or where["country"]}]
+            else:
+                places = (where.get("places") or [{"city": where["city"], "country": where["country"]}])[:3]
+            return _openings_for_places(e, code, places), None
         if name == "read_posting":   # Tim: the function is in api/openings.py
             return read_posting(args.get("url", "")), None
         if name == "save_plan":
@@ -396,6 +426,14 @@ class Guide:
             if code not in e.position:
                 return {"error": "unknown census code"}, None
             return {"ok": True, "opened": e.census.at[code, "title"]}, {"type": "open_job", "census": code}
+        if name == "set_location":
+            places = [{"city": str(p.get("city", "")).strip()[:80], "country": p.get("country")}
+                      for p in (args.get("places") or [])[:5]
+                      if str(p.get("city", "")).strip() and p.get("country") in {c for c, _ in COUNTRIES}]
+            if not places:
+                return {"error": "give at least one city with a country code"}, None
+            return {"ok": True, "places": places, "remote": bool(args.get("remote"))}, {
+                "type": "set_location", "places": places, "remote": bool(args.get("remote"))}
         if name == "update_profile":
             change = {k: args[k] for k in ("goals", "hobbies", "experience_years", "add_title") if k in args}
             if "add_title" in change:
@@ -457,6 +495,9 @@ class Guide:
                         yield event({"type": "action", "action": action})
                         if action["type"] == "update_profile":   # later tool calls see the change
                             profile = _apply(profile, action)
+                        if action["type"] == "set_location":   # an openings search right after uses the new places
+                            location = {"city": action["places"][0]["city"], "country": action["places"][0]["country"],
+                                        "places": action["places"], "remote": action["remote"], "confirmed": True}
                     results.append({"type": "tool_result", "tool_use_id": block.id, "content": _json(result)})
                 # A round that only suggests replies ends the answer. Anything else (even an app action like
                 # save_plan) gets its result back, so Claude can tell the person what it did.
@@ -472,6 +513,36 @@ class Guide:
             yield event({"type": "error", "message": f"Claude API error: {getattr(error, 'message', error)}"})
         except Exception as error:
             yield event({"type": "error", "message": f"Something went wrong: {error}"})
+
+
+def _openings_for_places(e, code: int, places: list[dict]) -> dict:
+    """Openings for each of the person's places, merged: a posting counts as local if it's in any of them."""
+    results = [(p, find_openings(e, code, p["city"], p["country"], limit=10)) for p in places]
+    first = results[0][1]
+    merged, near = {}, {}
+    for place, found in results:
+        for o in found["openings"]:
+            key = o["url"]
+            if o["near"] > near.get(key, -1):
+                near[key] = o["near"]
+                merged[key] = dict(o, where=("in " + place["city"]) if o["near"] == 2 else
+                                   ["elsewhere", "remote"][o["near"]])
+    openings = sorted(merged.values(), key=lambda o: -near[o["url"]])
+    for o in openings:
+        o.pop("near", None)
+    return {
+        "occupation": first["occupation"],
+        "search_terms": first["search_terms"],
+        "places_searched": [f"{p['city']} ({p['country']})" for p, _ in results],
+        "sources": first["sources"] if len(results) == 1 else {p["city"]: f["sources"] for p, f in results},
+        "openings": openings[:10 * len(results)],
+        "total_matched": sum(f["total_matched"] for _, f in results),
+        "by_place": {
+            "in_their_places": sum(v == 2 for v in near.values()),
+            "remote": sum(v == 1 for v in near.values()),
+            "elsewhere": sum(v == 0 for v in near.values()),
+        },
+    }
 
 
 def _apply(profile: Profile, action: dict) -> Profile:

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { loadLocation } from "@/lib/location";
+import { searchForChat } from "@/lib/location";
 import type { Plan } from "@/lib/plan";
 import { streamChat, type ChatAction, type ChatMessage, type Profile } from "@/lib/api";
 import { Markdown } from "./Markdown";
@@ -116,7 +116,7 @@ export function ChatPanel({ turns, setTurns, profile, selected, onAction, pendin
     let failed = false;
     try {
       await streamChat(
-        { messages: history, profile, selected, location: loadLocation(), plan },
+        { messages: history, profile, selected, location: searchForChat(), plan },
         (event) => {
           if (event.type === "text") {
             answered = true;

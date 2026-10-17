@@ -576,3 +576,10 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .opening-flags { flex-wrap: wrap; align-items: center; }
 .opening-pay { font-size: 13px; font-weight: 600; color: var(--ink); }
 .badge-good { border-color: color-mix(in srgb, var(--signal) 60%, var(--rule)); background: color-mix(in srgb, var(--signal) 18%, var(--paper)); color: var(--ink); }
+
+.location-editor { display: flex; flex-direction: column; gap: 10px; }
+.place-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.place-list li { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.place-add { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 0.8fr) auto; gap: 8px; }
+.action.secondary { background: var(--paper); color: var(--ink); border: 1px solid var(--rule); align-self: stretch; height: 42px; }
+.check { display: flex; gap: 8px; align-items: center; cursor: pointer; }

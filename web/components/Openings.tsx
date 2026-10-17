@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { api, type Openings as Result } from "@/lib/api";
-import { COUNTRIES, DEFAULT_LOCATION, loadLocation, saveLocation, type Country, type Location } from "@/lib/location";
+import { COUNTRIES, DEFAULT_LOCATION, loadSearch, SEARCH_EVENT, type Country, type Location } from "@/lib/location";
 
 const NEAR = ["Elsewhere", "Remote", "In your city"];
 
@@ -14,7 +14,17 @@ export function Openings({ census }: { census: number }) {
   const [error, setError] = useState<string | null>(null);
   const controller = useRef<AbortController | null>(null);
 
-  useEffect(() => setWhere(loadLocation()), []);
+  const [places, setPlaces] = useState<Location[]>([]);
+  useEffect(() => {
+    const sync = () => {
+      const search = loadSearch();
+      setPlaces(search.places);
+      setWhere(search.places[0] ?? DEFAULT_LOCATION);
+    };
+    sync();
+    window.addEventListener(SEARCH_EVENT, sync);
+    return () => window.removeEventListener(SEARCH_EVENT, sync);
+  }, []);
   useEffect(() => {
     controller.current?.abort();
     setResult(null);
@@ -23,8 +33,7 @@ export function Openings({ census }: { census: number }) {
   }, [census]);
 
   async function search() {
-    const city = where.city.trim();
-    saveLocation({ ...where, city });
+    const city = where.city.trim(); // a one-off search: where they're looking is set in their profile
     controller.current?.abort();
     controller.current = new AbortController();
     setBusy(true);
@@ -87,6 +96,21 @@ export function Openings({ census }: { census: number }) {
           {busy ? "Searching…" : "Find openings"}
         </button>
       </form>
+      {places.length > 1 && (
+        <div className="chips" role="group" aria-label="Your places">
+          {places.map((p) => (
+            <button
+              key={`${p.city}|${p.country}`}
+              type="button"
+              className="chip"
+              aria-pressed={p.city === where.city && p.country === where.country}
+              onClick={() => setWhere(p)}
+            >
+              {p.city}
+            </button>
+          ))}
+        </div>
+      )}
       {error && <p className="error">{error}</p>}
       {result && (
         <>
