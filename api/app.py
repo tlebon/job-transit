@@ -196,7 +196,7 @@ def openings_warm(body: WarmIn, request: Request):
 
 @app.post("/openings")
 def openings(body: OpeningsIn):
-    """Live postings for an occupation from Adzuna, 80,000 Hours, Arbeitnow and AI company boards."""
+    """Live postings for an occupation from Adzuna, the Bundesagentur, 80,000 Hours, Arbeitnow and AI company boards."""
     if body.census not in engine.position:
         raise HTTPException(400, "Unknown occupation code")
     return find_openings(engine, body.census, body.city.strip(), body.country)

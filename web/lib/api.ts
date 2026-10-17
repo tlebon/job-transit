@@ -163,6 +163,9 @@ export type Opening = {
   us_only?: boolean; // remote, but only for people in the US or the Americas
   language?: "German" | "English" | null; // the language the posting is written in
   needs_german?: boolean; // asks for good German
+  pay?: string | null; // pay range as the ad gives it (Arbeitsagentur), e.g. "€18–21 an hour"
+  career_changer?: boolean; // the ad says it's open to career changers (Quereinstieg)
+  home_office?: boolean;
 };
 export type Openings = {
   occupation: string;

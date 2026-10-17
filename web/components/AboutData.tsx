@@ -57,7 +57,10 @@ export function AboutData({ onClose }: Props) {
             </div>
             <div>
               <dt>Openings</dt>
-              <dd>Live postings from Adzuna, Arbeitnow, 80,000 Hours and AI companies’ own job boards.</dd>
+              <dd>
+                Live postings from Adzuna, the Bundesagentur für Arbeit (Germany’s public job board, with pay ranges
+                and whether an ad is open to career changers), Arbeitnow, 80,000 Hours and AI companies’ own job boards.
+              </dd>
             </div>
             <div>
               <dt>Your data</dt>

@@ -117,12 +117,15 @@ export function Openings({ census }: { census: number }) {
                     <span className="sep" aria-hidden>·</span>
                     via {o.source}
                   </span>
-                  {(o.needs_german || o.language === "German") && (
+                  {(o.pay || o.career_changer || o.home_office || o.needs_german || o.language === "German") && (
                     <span className="opening-flags">
+                      {o.pay && <span className="opening-pay">{o.pay}</span>}
+                      {o.career_changer && <span className="badge badge-good">Open to career changers</span>}
+                      {o.home_office && <span className="badge">Home office possible</span>}
                       {o.needs_german ? (
                         <span className="badge">Asks for good German</span>
                       ) : (
-                        <span className="badge">Written in German</span>
+                        o.language === "German" && <span className="badge">Written in German</span>
                       )}
                     </span>
                   )}
@@ -147,7 +150,7 @@ export function Openings({ census }: { census: number }) {
         </>
       )}
       {!result && !busy && !error && (
-        <p className="q-help">Live postings from Adzuna, 80,000 Hours, Arbeitnow and AI company job boards.</p>
+        <p className="q-help">Live postings from Adzuna, the Bundesagentur für Arbeit, 80,000 Hours, Arbeitnow and AI company job boards.</p>
       )}
     </section>
   );

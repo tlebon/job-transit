@@ -572,3 +572,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .about-list dt { font-weight: 700; }
 .about-list dd { margin: 2px 0 0; color: var(--ink-2); }
 @media (max-width: 520px) { .hide-narrow { display: none; } }
+
+.opening-flags { flex-wrap: wrap; align-items: center; }
+.opening-pay { font-size: 13px; font-weight: 600; color: var(--ink); }
+.badge-good { border-color: color-mix(in srgb, var(--signal) 60%, var(--rule)); background: color-mix(in srgb, var(--signal) 18%, var(--paper)); color: var(--ink); }

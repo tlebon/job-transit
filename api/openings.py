@@ -4,6 +4,8 @@ Sources (ported from job-finder/src/sources):
   - Adzuna: search API by title and city; needs ADZUNA_APP_ID and ADZUNA_APP_KEY in .env
   - 80,000 Hours: the public Algolia index behind jobs.80000hours.org
   - Arbeitnow: free German job board API (no search: recent postings)
+  - Bundesagentur für Arbeit (Arbeitsagentur): Germany's public job board, searched by German job titles
+    (rest.arbeitsagentur.de, the API its own apps use; documented at github.com/bundesAPI/jobsuche-api)
   - Company boards on Ashby / Greenhouse / Lever (AI companies; job-finder's verified watchlist)
 
 How it works: postings are collected into a small SQLite table and each one is matched to an occupation once, when
@@ -11,7 +13,7 @@ it is stored (the app's own title search, top result only, so "Senior Data Scien
 "Data Center Technician" doesn't). A search is then a lookup by occupation code.
   - Boards that can't be searched (company boards, Arbeitnow) are collected in the background: when the API starts
     and again every REFRESH_SECONDS (start_collector).
-  - Searchable sources (Adzuna, 80,000 Hours) are fetched for the occupation's search terms when someone asks, and
+  - Searchable sources (Adzuna, Arbeitsagentur, 80,000 Hours) are fetched for the occupation's search terms when someone asks, and
     stored the same way, so a repeat search is a lookup too.
   - If a source fails, its last stored postings are still shown, with their age.
 The table lives in data/cache/openings.sqlite (OPENINGS_CACHE to move it; on Railway, put a volume there).
@@ -19,6 +21,7 @@ The table lives in data/cache/openings.sqlite (OPENINGS_CACHE to move it; on Rai
 
 import html
 import ipaddress
+import json
 import os
 import re
 import socket
@@ -99,14 +102,18 @@ def _get(url: str, **kw):
     return response.json()
 
 
-def _posting(title, company, location, url, description=None):
-    """description: the posting's text as the source gives it (plain text or HTML; read_posting cleans it)."""
+def _posting(title, company, location, url, description=None, census=None, extra=None):
+    """description: the posting's text as the source gives it (plain text or HTML; read_posting cleans it).
+    census: the occupation, when the source was searched for it and its titles can't be matched (German titles).
+    extra: source-specific facts shown with the posting (pay range, open to career changers)."""
     return {
         "title": (title or "").strip(),
         "company": (company or "").strip() or "Unknown",
         "location": (location or "").strip() or "Unknown",
         "url": url or "",
         "description": description or None,
+        "census": census,
+        "extra": extra or None,
     }
 
 
@@ -130,6 +137,81 @@ def adzuna_feed(term: str, city: str, country: str):
         )
         for j in data.get("results", [])
     ]  # Adzuna's description is a short snippet, not the full text
+
+
+# ---- Bundesagentur für Arbeit -------------------------------------------------------------------
+BA_URL = "https://rest.arbeitsagentur.de/jobboerse/jobsuche-service/pc/v6/jobs"
+BA_HEADERS = {**HEADERS, "X-API-Key": "jobboerse-jobsuche"}   # the public key its own web app sends
+BA_PAY_UNIT = {"STUNDENLOHN": "an hour", "MONATSGEHALT": "a month", "MONATSLOHN": "a month",
+               "JAHRESGEHALT": "a year", "JAHRESLOHN": "a year"}
+GERMAN_TITLES_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-haiku-5-5")
+
+
+def german_titles(engine, census: int) -> list[str]:
+    """2-3 titles German job ads use for this occupation (Tischler, not Carpenters). Asked once, then stored."""
+    with closing(_connect()) as con:
+        row = con.execute("SELECT terms FROM german_titles WHERE census = ?", (census,)).fetchone()
+    if row:
+        return json.loads(row[0])
+    english = search_terms(engine, census)
+    try:
+        import anthropic
+        reply = anthropic.Anthropic().messages.create(
+            model=GERMAN_TITLES_MODEL, max_tokens=100,
+            messages=[{"role": "user", "content": (
+                f"US occupation: {engine.census.at[census, 'title']} (titles such as {', '.join(english)}). "
+                "Give the 2 or 3 job titles German job ads use most for this work, as a JSON array of strings, "
+                "without (m/w/d) or gender forms: for example [\"Tischler\", \"Schreiner\"]. Only the array.")}],
+        )
+        text = reply.content[0].text
+        terms = [t.strip() for t in json.loads(text[text.index("["): text.rindex("]") + 1]) if t.strip()][:3]
+    except Exception:
+        return english   # no key or a bad answer: English titles still find tech jobs; try again next time
+    with _write_lock, closing(_connect()) as con, con:
+        con.execute("INSERT OR REPLACE INTO german_titles VALUES (?, ?)", (census, json.dumps(terms)))
+    return terms or english
+
+
+def _ba_posting(job: dict, census: int) -> dict:
+    place = ((job.get("stellenlokationen") or [{}])[0].get("adresse") or {})
+    location = ", ".join(x for x in [place.get("ort"), "Germany"] if x)
+    low, high = job.get("gehaltsspanneVon"), job.get("gehaltsspanneBis")
+    unit = BA_PAY_UNIT.get(job.get("verguetungsangabe") or "", "")
+    money = lambda x: f"{x:,.0f}" if x >= 100 else f"{x:.2f}".rstrip("0").rstrip(".")
+    pay = None
+    if low and high:
+        pay = f"€{money(low)}–{money(high)} {unit}".strip()
+    elif low or high:
+        pay = f"€{money(low or high)} {unit}".strip()
+    hours = "full-time" if job.get("arbeitszeitVollzeit") else "part-time"
+    facts = [f"{job.get('stellenangebotsTitel')} at {job.get('firma')}, {location}.", f"Pay: {pay}." if pay else "",
+             f"Hours: {hours}.", "Permanent contract." if job.get("vertragsdauer") == "UNBEFRISTET" else "",
+             "Open to career changers (Quereinstieg)." if job.get("quereinstiegGeeignet") else "",
+             "Home office possible." if job.get("homeofficemoeglich") else "",
+             f"Start: {(job.get('eintrittszeitraum') or {}).get('von')}." if job.get("eintrittszeitraum") else "",
+             "The full ad is on the Arbeitsagentur page."]
+    return _posting(
+        job.get("stellenangebotsTitel"), job.get("firma"), location,
+        f"https://www.arbeitsagentur.de/jobsuche/jobdetail/{job.get('referenznummer')}",
+        " ".join(f for f in facts if f), census=census,
+        extra={"pay": pay, "career_changer": bool(job.get("quereinstiegGeeignet")),
+               "home_office": bool(job.get("homeofficemoeglich"))},
+    )
+
+
+def ba_feed(engine, census: int, city: str):
+    """The occupation's German titles searched on the Bundesagentur's board, within 25 km of the city."""
+    found = {}
+    for term in german_titles(engine, census):
+        params = {"was": term, "umkreis": 25, "size": 50, "page": 1, "angebotsart": 1}
+        if city:
+            params["wo"] = city
+        response = httpx.get(BA_URL, params=params, headers=BA_HEADERS, timeout=TIMEOUT)
+        response.raise_for_status()
+        for job in response.json().get("ergebnisliste") or []:
+            if job.get("referenznummer"):
+                found.setdefault(job["referenznummer"], _ba_posting(job, census))
+    return list(found.values())
 
 
 def eighty_thousand_hours_feed(term: str):
@@ -241,9 +323,12 @@ def background_feeds():
     return feeds
 
 
-def search_feeds(terms: list[str], city: str, country: str):
+def search_feeds(terms: list[str], city: str, country: str, engine=None, census: int | None = None):
     """Searchable sources: fetched for this occupation's terms when someone asks."""
-    feeds = [
+    feeds = []
+    if country == "de" and engine is not None and census is not None:
+        feeds.append((f"ba|{census}|{city.lower()}", "Arbeitsagentur", partial(ba_feed, engine, census, city)))
+    feeds += [
         (f"80k|{term}", "80,000 Hours", partial(eighty_thousand_hours_feed, term))
         for term in terms
     ]
@@ -259,7 +344,7 @@ def search_feeds(terms: list[str], city: str, country: str):
     return feeds
 
 
-SOURCE_ORDER = ["Adzuna", "80,000 Hours", "Arbeitnow", "AI company boards"]
+SOURCE_ORDER = ["Adzuna", "Arbeitsagentur", "80,000 Hours", "Arbeitnow", "AI company boards"]
 
 
 # ---- storage -------------------------------------------------------------------------------------
@@ -275,7 +360,7 @@ _titles: dict[str, tuple[int | None, float]] | None = (
 )
 
 
-SCHEMA_VERSION = 3  # bump when the tables change: it's only a cache, so an old file is simply rebuilt
+SCHEMA_VERSION = 4  # bump when the tables change: it's only a cache, so an old file is simply rebuilt
 
 
 def _connect() -> sqlite3.Connection:
@@ -292,12 +377,13 @@ def _connect() -> sqlite3.Connection:
         CREATE TABLE IF NOT EXISTS postings (
             feed TEXT NOT NULL, source TEXT NOT NULL, title TEXT NOT NULL, company TEXT, location TEXT,
             url TEXT NOT NULL, census INTEGER, score REAL, fetched_at REAL NOT NULL, description TEXT,
-            PRIMARY KEY (feed, url, title));
+            extra TEXT, PRIMARY KEY (feed, url, title));
         CREATE INDEX IF NOT EXISTS postings_url ON postings (url);
         CREATE INDEX IF NOT EXISTS postings_census ON postings (census);
         CREATE TABLE IF NOT EXISTS feeds (
             feed TEXT PRIMARY KEY, source TEXT NOT NULL, fetched_at REAL, error TEXT, error_at REAL);
         CREATE TABLE IF NOT EXISTS titles (title TEXT PRIMARY KEY, census INTEGER, score REAL);
+        CREATE TABLE IF NOT EXISTS german_titles (census INTEGER PRIMARY KEY, terms TEXT NOT NULL);
     """)
     return con
 
@@ -323,12 +409,17 @@ def _classify(engine, title: str) -> tuple[int | None, float]:
 
 def _store(engine, feed: str, source: str, postings: list[dict]):
     """Replace a feed's postings with a fresh fetch, each matched to an occupation."""
-    rows, seen = [], set()
+    rows, seen, matched = [], set(), []
     for p in postings:
         if not p["title"] or not p["url"] or (p["url"], p["title"]) in seen:
             continue
         seen.add((p["url"], p["title"]))
-        census, score = _classify(engine, p["title"])
+        # searched for one occupation with German titles: trust the search instead of matching English titles
+        if p.get("census") is not None:
+            census, score = p["census"], 100.0
+        else:
+            census, score = _classify(engine, p["title"])
+            matched.append((p["title"], census, score))
         rows.append(
             (
                 feed,
@@ -341,12 +432,13 @@ def _store(engine, feed: str, source: str, postings: list[dict]):
                 score,
                 time.time(),
                 p.get("description"),
+                json.dumps(p["extra"]) if p.get("extra") else None,
             )
         )
     with _write_lock, closing(_connect()) as con, con:
         con.execute("DELETE FROM postings WHERE feed = ?", (feed,))
         con.executemany(
-            "INSERT OR REPLACE INTO postings VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO postings VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             rows,
         )
         con.execute(
@@ -355,7 +447,7 @@ def _store(engine, feed: str, source: str, postings: list[dict]):
         )
         con.executemany(
             "INSERT OR IGNORE INTO titles VALUES (?, ?, ?)",
-            [(r[2], r[6], r[7]) for r in rows],
+            matched,
         )
 
 
@@ -404,7 +496,8 @@ _warming_lock = threading.Lock()
 
 def warm(engine, censuses: list[int], city: str, country: str) -> int:
     """Fetch the searchable sources for these occupations in the background. Returns how many fetches started."""
-    feeds = [f for census in censuses[:WARM_LIMIT] for f in search_feeds(search_terms(engine, census), city, country)]
+    feeds = [f for census in censuses[:WARM_LIMIT]
+             for f in search_feeds(search_terms(engine, census), city, country, engine, census)]
     ages = _fetched_at([f[0] for f in feeds])
     started = 0
     for feed, source, fetch in feeds:
@@ -558,7 +651,7 @@ def find_openings(
     engine, census: int, city: str = "Berlin", country: str = "de", limit: int = 25
 ):
     terms = search_terms(engine, census)
-    live = search_feeds(terms, city, country)
+    live = search_feeds(terms, city, country, engine, census)
 
     # searchable sources: fetch the stale ones now (in parallel, within the budget); late ones still get stored
     ages = _fetched_at([f[0] for f in live])
@@ -580,7 +673,7 @@ def find_openings(
     marks = ",".join("?" * len(feeds))
     with closing(_connect()) as con:
         rows = con.execute(
-            f"SELECT source, title, company, location, url, fetched_at, description FROM postings "
+            f"SELECT source, title, company, location, url, fetched_at, description, extra FROM postings "
             f"WHERE census = ? AND score >= ? AND feed IN ({marks}) ORDER BY fetched_at DESC",
             [census, MIN_MATCH_SCORE, *feeds],
         ).fetchall()
@@ -594,7 +687,7 @@ def find_openings(
         key=lambda r: rank.get(r[0], 9)
     )  # the same posting on two boards: keep the first source's copy
     keep, seen = [], set()
-    for source, title, company, location, url, fetched_at, description in rows:
+    for source, title, company, location, url, fetched_at, description, extra in rows:
         key = (title.lower(), (company or "").lower())
         if key in seen:
             continue
@@ -610,8 +703,10 @@ def find_openings(
                 "source": source,
                 "near": 0 if us else near,   # remote but US-only isn't remote for someone in Europe
                 "us_only": us,
-                "language": posting_language(title, description),
+                # Arbeitsagentur text is our own English summary, so its language says nothing
+                "language": None if source == "Arbeitsagentur" else posting_language(title, description),
                 "needs_german": bool(NEEDS_GERMAN.search(f"{title} {description or ''}")),
+                **(json.loads(extra) if extra else {}),   # pay, career_changer, home_office (Arbeitsagentur)
             }
         )
     keep.sort(
