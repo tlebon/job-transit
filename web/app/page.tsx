@@ -204,6 +204,7 @@ export default function Home() {
       setPlan(planFromAction(action, plan));
       return;
     }
+    if (action.type === "suggest_replies") return; // shown in the chat itself
     if (action.type === "open_stop") {
       setFocus({ census: action.census, at: Date.now() });
       return;

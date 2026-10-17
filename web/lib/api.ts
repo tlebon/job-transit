@@ -207,6 +207,7 @@ export const EMPTY_PROFILE: Profile = {
 export type ChatMessage = { role: "user" | "assistant"; content: string };
 export type ChatAction =
   | { type: "open_stop"; census: number }
+  | { type: "suggest_replies"; replies: string[] }
   | PlanAction
   | {
       type: "update_profile";

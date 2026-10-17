@@ -16,7 +16,7 @@ import anthropic
 from dotenv import load_dotenv
 
 from api.engine import Engine, Profile
-from api.openings import COUNTRIES, find_openings
+from api.openings import COUNTRIES, find_openings, read_posting
 
 load_dotenv()
 
@@ -49,7 +49,13 @@ what to build or learn and how to show it, who to talk to, and when to start app
 week to aim for. Prefer steps they can start this week. After saving, say in one or two sentences that the plan is \
 in their plan panel, where they can tick steps off and add reminders to their calendar; don't repeat every step. \
 If they ask to change the plan, call save_plan again with the whole revised plan.
+- End every reply by calling suggest_replies with 2 or 3 short things the person might say next, in their own voice \
+("Make me a plan for this", "What about remote roles?"). If you asked them a question, offer likely answers. If \
+something important about them is still unknown (what they want from a change, years of experience, their city, \
+what they enjoy), make one suggestion a quick way to tell you ("I care most about pay").
 - Occupations are identified by census codes; get them from search_jobs or recommend, never guess them.
+- When they ask about a specific posting, read it with read_posting before judging the fit, and point to the \
+parts of the posting that match or don't match their profile.
 
 The person's current situation:
 {context}"""
@@ -99,6 +105,13 @@ TOOLS = [
         },
     },
     {
+        "name": "read_posting",
+              "description": "Read the full text of one job posting from its link (from find_openings results) to determine "
+                       "if it fits the person's profile or to suggest adjusting a CV. The result says whether it is the "
+                       "full posting or only a short snippet.",
+        "input_schema": {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]},
+    },
+    {
         "name": "save_plan",
         "description": ("App action: save a step-by-step plan for moving to one occupation. It appears in the app as a "
                         "to-do list with dates, replacing any earlier plan."),
@@ -122,6 +135,16 @@ TOOLS = [
                 },
             },
             "required": ["census", "summary", "steps"],
+        },
+    },
+    {
+        "name": "suggest_replies",
+        "description": "App action: show 2-3 tappable suggestions for the person's next message. Call it once, last.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"replies": {"type": "array", "minItems": 1, "maxItems": 3,
+                                       "items": {"type": "string", "description": "Under 60 characters, first person."}}},
+            "required": ["replies"],
         },
     },
     {
@@ -152,6 +175,7 @@ TOOL_LABELS = {
     "stop_details": lambda a: "Looking up a stop",
     "find_openings": lambda a: "Searching job boards" + (f" in {a['city']}" if a.get("city") else ""),
     "save_plan": lambda a: "Saving your plan",
+    "read_posting": lambda a: "Reading the posting",
     "open_stop": lambda a: "Opening the stop on the map",
     "update_profile": lambda a: "Updating your profile",
 }
@@ -252,6 +276,8 @@ class Guide:
             for p in found["openings"]:
                 p["where"] = ["elsewhere", "remote", "in their city"][p.pop("near")]
             return found, None
+        if name == "read_posting":   # Tim: the function is in api/openings.py
+            return read_posting(args.get("url", "")), None
         if name == "save_plan":
             code = args.get("census")
             if code not in e.position:
@@ -264,6 +290,9 @@ class Guide:
             return {"ok": True, "saved_steps": len(steps)}, {
                 "type": "save_plan", "census": code, "occupation": e.census.at[code, "title"],
                 "summary": str(args.get("summary", ""))[:300], "steps": steps}
+        if name == "suggest_replies":
+            replies = [str(r).strip()[:80] for r in (args.get("replies") or []) if str(r).strip()][:3]
+            return {"ok": True}, ({"type": "suggest_replies", "replies": replies} if replies else None)
         if name == "open_stop":
             code = args.get("census")
             if code not in e.position:
@@ -297,12 +326,14 @@ class Guide:
                 convo.append({"role": "assistant", "content": [block.model_dump(exclude_none=True) for block in final.content]})
                 if final.stop_reason != "tool_use":
                     break
-                results = []
+                results, only_suggestions = [], True
                 for block in final.content:
                     if block.type != "tool_use":
                         continue
-                    label = TOOL_LABELS.get(block.name, lambda a: block.name)(block.input or {})
-                    yield event({"type": "tool", "label": label})
+                    if block.name != "suggest_replies":   # suggestions are silent: no status line
+                        only_suggestions = False
+                        label = TOOL_LABELS.get(block.name, lambda a: block.name)(block.input or {})
+                        yield event({"type": "tool", "label": label})
                     try:
                         result, action = self.run_tool(block.name, block.input or {}, profile, location)
                     except Exception as error:  # report to Claude, keep going
@@ -312,6 +343,8 @@ class Guide:
                         if action["type"] == "update_profile":   # later tool calls see the change
                             profile = _apply(profile, action)
                     results.append({"type": "tool_result", "tool_use_id": block.id, "content": _json(result)})
+                if only_suggestions:   # the reply is finished; no need for another round
+                    break
                 convo.append({"role": "user", "content": results})
             yield event({"type": "done"})
         except anthropic.AuthenticationError:

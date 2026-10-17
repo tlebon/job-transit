@@ -6,7 +6,7 @@ import type { Plan } from "@/lib/plan";
 import { streamChat, type ChatAction, type ChatMessage, type Profile } from "@/lib/api";
 import { Markdown } from "./Markdown";
 
-export type Turn = ChatMessage & { status?: string; error?: string };
+export type Turn = ChatMessage & { status?: string; error?: string; suggestions?: string[] };
 
 const STARTERS = [
   "Where could I go that pays more?",
@@ -84,7 +84,9 @@ export function ChatPanel({ turns, setTurns, profile, selected, onAction, pendin
             afterTool = true;
             update((last) => ({ ...last, status: event.label }));
           } else if (event.type === "action") {
-            onAction(event.action);
+            const action = event.action;
+            if (action.type === "suggest_replies") update((last) => ({ ...last, suggestions: action.replies }));
+            else onAction(action);
           } else if (event.type === "error") {
             update((last) => ({ ...last, error: event.message, status: undefined }));
           }
@@ -131,6 +133,15 @@ export function ChatPanel({ turns, setTurns, profile, selected, onAction, pendin
               <p className="chat-status">Thinking…</p>
             )}
             {t.error && <p className="error">{t.error}</p>}
+            {t.suggestions && t.suggestions.length > 0 && !busy && i === turns.length - 1 && (
+              <div className="chat-suggestions" aria-label="Suggested replies">
+                {t.suggestions.map((s) => (
+                  <button key={s} type="button" className="chip" onClick={() => send(s)}>
+                    {s}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         ))}
       </div>
