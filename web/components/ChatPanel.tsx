@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { searchForChat } from "@/lib/location";
+import { COMPACT_AT_CHARS, COMPACT_AT_MESSAGES, KEEP_RECENT, SEND_MAX_CHARS, type Memory } from "@/lib/workspace";
 import type { Plan } from "@/lib/plan";
-import { streamChat, type ChatAction, type ChatMessage, type Profile } from "@/lib/api";
+import { api, streamChat, type ChatAction, type ChatMessage, type Profile } from "@/lib/api";
 import { Markdown } from "./Markdown";
 
 // failed: a question that never reached the guide (API down, network); shown with Retry, left out of the history
@@ -34,12 +35,14 @@ type Props = {
   extraBody?: () => Record<string, unknown>; // read at send time: the other plans and conversations
   onBusy?: (busy: boolean) => void;
   placeholder?: string;
+  memory?: Memory; // the older part of this conversation, summarized
+  onMemory?: (memory: Memory | null) => void;
   onPendingSent?: () => void;
   plan?: Plan | null; // sent along so the guide can discuss and revise it
 };
 
 /** The guide: a chat grounded in the planner's data, which can also open jobs and update the profile. */
-export function ChatPanel({ turns, setTurns, profile, selected, onAction, pendingQuestion, onPendingSent, plan, hidden, extraBody, onBusy, placeholder }: Props) {
+export function ChatPanel({ turns, setTurns, profile, selected, onAction, pendingQuestion, onPendingSent, plan, hidden, extraBody, onBusy, placeholder, memory, onMemory }: Props) {
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   useEffect(() => onBusy?.(busy), [busy]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -112,6 +115,7 @@ export function ChatPanel({ turns, setTurns, profile, selected, onAction, pendin
       { role: "user", content: question },
     ];
     setTurns(() => [...kept, { role: "user", content: question }, { role: "assistant", content: "" }]);
+    let remembered = memory && memory.upTo < history.length ? memory : undefined;
     setDraft("");
     setBusy(true);
     controller.current = new AbortController();
@@ -119,8 +123,37 @@ export function ChatPanel({ turns, setTurns, profile, selected, onAction, pendin
     let answered = false; // has any of the answer arrived (decides what Stop does)
     let failed = false;
     try {
+      const from = remembered?.upTo ?? 0;
+      const fresh = history.slice(from);
+      if (fresh.reduce((n, m) => n + m.content.length, 0) > COMPACT_AT_CHARS || fresh.length > COMPACT_AT_MESSAGES) {
+        let cut = history.length - KEEP_RECENT;
+        while (cut > from && history[cut].role !== "user") cut--; // what's sent has to start with their message
+        if (cut > from) {
+          update((last) => ({ ...last, status: "Summarizing the earlier conversation" }));
+          try {
+            const { summary } = await api.compactChat(history.slice(from, cut), remembered?.summary);
+            remembered = { summary, upTo: cut };
+            onMemory?.(remembered);
+          } catch {
+            /* send the full messages instead */
+          }
+        }
+      }
+      const messages = history
+        .slice(remembered?.upTo ?? 0)
+        .map((m, i, all) =>
+          i < all.length - 1 && m.content.length > SEND_MAX_CHARS ? { ...m, content: m.content.slice(0, SEND_MAX_CHARS) + " […trimmed]" } : m,
+        );
       await streamChat(
-        { messages: history, profile, selected, location: searchForChat(), plan, ...(extraBody?.() ?? {}) },
+        {
+          messages,
+          summary: remembered?.summary,
+          profile,
+          selected,
+          location: searchForChat(),
+          plan,
+          ...(extraBody?.() ?? {}),
+        },
         (event) => {
           if (event.type === "text") {
             answered = true;
@@ -154,13 +187,27 @@ export function ChatPanel({ turns, setTurns, profile, selected, onAction, pendin
     }
   }
 
+  // position of each turn among the messages that get sent (failed and empty ones don't), for the summary marker
+  const sentIndex: number[] = [];
+  turns.reduce((n, t, i) => {
+    sentIndex[i] = !t.failed && t.content ? n : -1;
+    return !t.failed && t.content ? n + 1 : n;
+  }, 0);
+
   return (
     <section className="chat" aria-label="The guide" hidden={hidden}>
       <header className="chat-head">
         <strong>The guide</strong>
         <span className="q-help">Answers come from the same data as the map, and it can open jobs on the map and update your profile.</span>
         {turns.length > 0 && !busy && (
-          <button type="button" className="linkish" onClick={() => setTurns(() => [])}>
+          <button
+            type="button"
+            className="linkish"
+            onClick={() => {
+              setTurns(() => []);
+              onMemory?.(null);
+            }}
+          >
             New conversation
           </button>
         )}
@@ -179,7 +226,13 @@ export function ChatPanel({ turns, setTurns, profile, selected, onAction, pendin
           </div>
         )}
         {turns.map((t, i) => (
-          <div key={i} className={`chat-turn chat-${t.role}${t.failed ? " chat-failed" : ""}`}>
+          <Fragment key={i}>
+          {memory && sentIndex[i] === memory.upTo && (
+            <p className="chat-memory">
+              The guide keeps the messages above as a short summary, so long conversations stay quick.
+            </p>
+          )}
+          <div className={`chat-turn chat-${t.role}${t.failed ? " chat-failed" : ""}`}>
             {t.role === "assistant" ? <Markdown text={t.content} /> : <p>{t.content}</p>}
             {t.failed && (
               <p className="chat-failed-note">
@@ -208,6 +261,7 @@ export function ChatPanel({ turns, setTurns, profile, selected, onAction, pendin
               </div>
             )}
           </div>
+          </Fragment>
         ))}
       </div>
       <form

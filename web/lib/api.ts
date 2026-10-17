@@ -198,7 +198,14 @@ export const api = {
       body: JSON.stringify({ profile, census }),
       signal,
     }),
-  /** Start fetching openings for these jobs in the background, so the first search for them is quick. */
+  /** Summarize the older part of a conversation, to send instead of every message. */
+  compactChat: (messages: ChatMessage[], previous?: string) =>
+    getJson<{ summary: string }>("/chat/compact", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ messages, previous: previous ?? null }),
+    }),
+  /** Start fetching openings for these jobs in the background, so the first search is quick. */
   warmOpenings: (census: number[], city: string, country: string) =>
     getJson<{ started: number }>("/openings/warm", {
       method: "POST",

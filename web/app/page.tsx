@@ -651,6 +651,15 @@ export default function Home() {
                 })}
                 onBusy={(b) => setBusyChats((m) => (m[id] === b ? m : { ...m, [id]: b }))}
                 placeholder={own ? `Ask about your ${own.name || own.occupation} plan` : undefined}
+                memory={ws.memory?.[id]}
+                onMemory={(m) =>
+                  updateWs((w) => {
+                    const memory = { ...w.memory };
+                    if (m) memory[id] = m;
+                    else delete memory[id];
+                    return { ...w, memory };
+                  })
+                }
               />
             );
           })}

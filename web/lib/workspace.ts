@@ -9,7 +9,17 @@ export type Workspace = {
   plans: Plan[];
   chats: Record<string, StoredTurn[]>; // EXPLORE or a plan id -> its conversation
   active: string; // EXPLORE or a plan id
+  memory?: Record<string, Memory>; // a conversation's older part, summarized for the guide
 };
+
+// Compaction: every message resends the conversation, so long ones get slow and costly. Once the part the guide
+// hasn't had summarized passes these sizes, everything but the last few messages is summarized once (Haiku) and
+// the summary goes along instead. The person still sees every message.
+export type Memory = { summary: string; upTo: number }; // upTo: how many sent messages the summary covers
+export const COMPACT_AT_CHARS = 60_000; // ~15k tokens
+export const COMPACT_AT_MESSAGES = 40;
+export const KEEP_RECENT = 12;
+export const SEND_MAX_CHARS = 12_000; // a very long older message goes trimmed (the screen keeps it whole)
 
 const KEY = "job-transit-workspace-v1";
 const OLD_CHAT_KEY = "job-transit-chat-v1";
@@ -24,7 +34,7 @@ export function loadWorkspace(): Workspace {
     const saved = JSON.parse(localStorage.getItem(KEY) ?? "null") as Workspace | null;
     if (saved && Array.isArray(saved.plans) && saved.chats) {
       const active = saved.active === EXPLORE || saved.plans.some((p) => p.id === saved.active) ? saved.active : EXPLORE;
-      return { plans: saved.plans, chats: { [EXPLORE]: [], ...saved.chats }, active };
+      return { plans: saved.plans, chats: { [EXPLORE]: [], ...saved.chats }, active, memory: saved.memory ?? {} };
     }
     // before plan tabs: one plan and one conversation. The conversation becomes Explore, the plan its own tab.
     const plan = loadPlan();
@@ -77,7 +87,9 @@ export function upsertPlan(ws: Workspace, plan: Plan): { ws: Workspace; id: stri
 export function removePlan(ws: Workspace, id: string): Workspace {
   const chats = { ...ws.chats };
   delete chats[id];
-  return { plans: ws.plans.filter((p) => p.id !== id), chats, active: ws.active === id ? EXPLORE : ws.active };
+  const memory = { ...ws.memory };
+  delete memory[id];
+  return { plans: ws.plans.filter((p) => p.id !== id), chats, memory, active: ws.active === id ? EXPLORE : ws.active };
 }
 
 export const activePlan = (ws: Workspace) => ws.plans.find((p) => p.id === ws.active) ?? null;
