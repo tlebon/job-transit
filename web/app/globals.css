@@ -314,6 +314,9 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .chat-turn ul, .chat-turn ol { margin: 0 0 8px; padding-left: 20px; }
 .chat-user { align-self: flex-end; max-width: 85%; background: var(--paper); border: 1px solid var(--rule); border-radius: var(--radius-m); padding: 8px 12px; }
 .chat-user p { margin: 0; }
+.chat-user.chat-failed { border-style: dashed; border-color: var(--warn); }
+.chat-failed-note { margin: 4px 0 0 !important; font-size: 13px; color: var(--warn); }
+.chat-failed-note .linkish { font-size: 13px; color: var(--warn); }
 .chat-assistant { max-width: 100%; }
 .chat-turn a { color: inherit; text-decoration: underline; text-underline-offset: 2px; overflow-wrap: anywhere; }
 .chat-status { color: var(--ink-3); font-size: 13px; font-style: italic; }
@@ -498,4 +501,11 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .plan-editor-due .field { width: auto; height: 34px; }
 .plan-editor-actions { display: flex; align-items: center; gap: 14px; }
 .plan-delete { margin-left: auto; color: var(--warn); }
+.plan-practice { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; font-size: 13px; color: var(--ink-2); margin: 2px 0; }
+.plan-practice .linkish { font-size: 13px; }
+.plan-dots { display: inline-flex; gap: 3px; }
+.plan-dots span { width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--ink-3); }
+.plan-dots span[data-done="true"] { background: var(--signal); border-color: var(--signal); }
+.plan-practice-next.due { color: var(--warn); font-weight: 700; }
+.plan-editor-spaced { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; color: var(--ink-2); }
 .plan-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding-top: 10px; border-top: 1px solid var(--rule-soft); }

@@ -25,7 +25,7 @@ import {
   type SortKey,
 } from "@/lib/api";
 import { educationYears } from "@/lib/travel";
-import { loadPlan, planFromAction, savePlan, updateStep, type Plan } from "@/lib/plan";
+import { findStep, loadPlan, logSession, planFromAction, savePlan, updateStep, type Plan } from "@/lib/plan";
 
 const STORAGE_KEY = "job-transit-profile-v1";
 const ONBOARDED_KEY = "job-transit-onboarded-v1";
@@ -187,7 +187,10 @@ export default function Home() {
     setTurnsState((t) => {
       const next = fn(t);
       try {
-        localStorage.setItem(CHAT_KEY, JSON.stringify(next.map(({ role, content }) => ({ role, content }))));
+        localStorage.setItem(
+          CHAT_KEY,
+          JSON.stringify(next.map(({ role, content, failed, error }) => (failed ? { role, content, failed, error } : { role, content }))),
+        );
       } catch {
         /* not remembered */
       }
@@ -205,12 +208,14 @@ export default function Home() {
       return;
     }
     if (action.type === "suggest_replies") return; // shown in the chat itself
+    if (action.type === "log_practice") {
+      const step = plan && findStep(plan, action.title);
+      if (plan && step) setPlan(logSession(plan, step.id));
+      return;
+    }
     if (action.type === "update_step") {
       if (!plan) return;
-      const wanted = action.title.trim().toLowerCase();
-      const step =
-        plan.steps.find((s) => s.title.trim().toLowerCase() === wanted) ??
-        plan.steps.find((s) => s.title.toLowerCase().includes(wanted) || wanted.includes(s.title.toLowerCase()));
+      const step = findStep(plan, action.title);
       if (step) setPlan(updateStep(plan, step.id, { detail: step.detail ? `${step.detail}\n\n${action.add_detail}` : action.add_detail }));
       return;
     }
@@ -518,6 +523,10 @@ export default function Home() {
             <PlanCard
               plan={plan}
               onChange={setPlan}
+              onPractice={(step) => {
+                setPendingQuestion(`Give me a short practice session for this step of my plan: “${step.title}”`);
+                setChatMode(true);
+              }}
               onHelp={(step) => {
                 setPendingQuestion(`Help me get started on this step of my plan: “${step.title}”`);
                 setChatMode(true);

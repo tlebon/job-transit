@@ -56,7 +56,14 @@ exposure, moves). Link what you recommend as Markdown links, prefer free or well
 something costs money. Keep it to a few good options rather than a long list.
 - When they ask for help starting a step of their plan: find 2 or 3 concrete resources with web_search, suggest a \
 first small action they can do this week, and add the resources to that step with update_step.
-- When drafting a plan, you may include a link or two in a step's detail if you searched for them.
+- When drafting a plan, you may include a link or two in a step's detail if you searched for them. Mark steps that \
+build a skill or knowledge as kind "learn": the app schedules short practice sessions for them after 1, 3, 7, 14 and \
+30 days (spaced repetition), with reminders.
+- When they ask for a practice session on a step: run a short (about 10 minute) session of retrieval practice. Ask \
+one question or give one small exercise at a time, wait for their answer, give brief feedback, and adjust the \
+difficulty; 3 to 5 questions in total, mixing recall with applying it. Base it on what that step is about and what \
+they have practised before. When the session is done, call log_practice with the step's title and say when the \
+next session is due. If they only want to mark a session as done, call log_practice.
 - End every reply by calling suggest_replies with 2 or 3 short things the person might say next, in their own voice \
 ("Make me a plan for this", "What about remote roles?"). If you asked them a question, offer likely answers. If \
 something important about them is still unknown (what they want from a change, years of experience, their city, \
@@ -137,6 +144,9 @@ TOOLS = [
                             "detail": {"type": "string", "description": "One or two concrete sentences."},
                             "week": {"type": "integer", "minimum": 1, "maximum": 52,
                                      "description": "Week from now to aim to finish it by."},
+                            "kind": {"type": "string", "enum": ["learn", "do"],
+                                     "description": ("learn: building a skill or knowledge (gets spaced practice "
+                                                     "sessions); do: a one-off action (apply, contact someone).")},
                         },
                         "required": ["title", "detail", "week"],
                     },
@@ -157,6 +167,12 @@ TOOLS = [
             },
             "required": ["title", "add_detail"],
         },
+    },
+    {
+        "name": "log_practice",
+        "description": "App action: record that the person just finished a practice session for one learning step.",
+        "input_schema": {"type": "object", "properties": {"title": {"type": "string", "description": "The step's title."}},
+                         "required": ["title"]},
     },
     {
         "name": "suggest_replies",
@@ -190,7 +206,7 @@ TOOLS = [
     },
 ]
 
-APP_ACTIONS = {"suggest_replies", "update_step", "save_plan", "open_stop", "update_profile"}
+APP_ACTIONS = {"suggest_replies", "update_step", "log_practice", "save_plan", "open_stop", "update_profile"}
 WEB_SEARCH_MAX_USES = 3   # per request round; $10 per 1,000 searches plus the result tokens
 
 
@@ -210,6 +226,7 @@ TOOL_LABELS = {
     "find_openings": lambda a: "Searching job boards" + (f" in {a['city']}" if a.get("city") else ""),
     "save_plan": lambda a: "Saving your plan",
     "update_step": lambda a: "Updating your plan",
+    "log_practice": lambda a: "Logging your practice session",
     "read_posting": lambda a: "Reading the posting",
     "open_stop": lambda a: "Opening the stop on the map",
     "update_profile": lambda a: "Updating your profile",
@@ -266,8 +283,15 @@ class Guide:
         except Exception as error:  # the chat still works without the summary
             lines.append(f"(Couldn't compute recommendations: {error})")
         if plan and plan.get("steps"):
-            steps = "; ".join(f"{'[done] ' if st.get('done') else ''}{'[added by them] ' if st.get('mine') else ''}"
-                              f"{st.get('title', '')}" for st in plan["steps"][:12])
+            def describe(st):
+                tags = ["done"] * bool(st.get("done")) + ["added by them"] * bool(st.get("mine"))
+                sessions = st.get("sessions") or []
+                if sessions:
+                    left = [x for x in sessions if not x.get("done")]
+                    tags.append(f"learning: {len(sessions) - len(left)}/{len(sessions)} practice sessions"
+                                + (f", next {left[0].get('due')}" if left else ""))
+                return (f"[{'; '.join(tags)}] " if tags else "") + str(st.get("title", ""))
+            steps = "; ".join(describe(st) for st in plan["steps"][:12])
             lines.append(f"Their saved plan, toward {plan.get('occupation', '?')} (census {plan.get('census')}): {steps}")
         if location:
             lines.append(f"Looking for work in: {location['city']} ({location['country']})")
@@ -318,8 +342,9 @@ class Guide:
             code = args.get("census")
             if code not in e.position:
                 return {"error": "unknown census code; use search_jobs"}, None
-            steps = [{"title": str(st.get("title", ""))[:80], "detail": str(st.get("detail", ""))[:400],
-                      "week": max(1, min(52, int(st.get("week") or 1)))}
+            steps = [{"title": str(st.get("title", ""))[:80], "detail": str(st.get("detail", ""))[:600],
+                      "week": max(1, min(52, int(st.get("week") or 1))),
+                      "kind": "learn" if st.get("kind") == "learn" else "do"}
                      for st in (args.get("steps") or [])[:8] if st.get("title")]
             if len(steps) < 2:
                 return {"error": "a plan needs at least 2 steps"}, None
@@ -331,6 +356,9 @@ class Guide:
             if not title or not detail:
                 return {"error": "needs the step's title and the text to add"}, None
             return {"ok": True}, {"type": "update_step", "title": title, "add_detail": detail}
+        if name == "log_practice":
+            title = str(args.get("title", "")).strip()
+            return ({"ok": True}, {"type": "log_practice", "title": title}) if title else ({"error": "needs the step title"}, None)
         if name == "suggest_replies":
             replies = [str(r).strip()[:80] for r in (args.get("replies") or []) if str(r).strip()][:3]
             return {"ok": True}, ({"type": "suggest_replies", "replies": replies} if replies else None)

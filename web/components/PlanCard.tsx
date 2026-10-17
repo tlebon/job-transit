@@ -1,7 +1,17 @@
 "use client";
 
 import { useState } from "react";
-import { addStep, downloadIcs, removeStep, updateStep, type Plan, type PlanStep } from "@/lib/plan";
+import {
+  addStep,
+  downloadIcs,
+  logSession,
+  nextSession,
+  removeStep,
+  sessionsFrom,
+  updateStep,
+  type Plan,
+  type PlanStep,
+} from "@/lib/plan";
 import { Markdown } from "./Markdown";
 
 type Props = {
@@ -9,12 +19,13 @@ type Props = {
   onChange: (plan: Plan | null) => void; // null removes the plan
   onOpenStop: (census: number) => void;
   onHelp: (step: PlanStep) => void; // ask the guide for resources and a first action
+  onPractice: (step: PlanStep) => void; // a short quiz or exercise with the guide
 };
 
 const dateFormat = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short" });
 
 /** The saved plan: steps to tick off, edit or add to, with target dates and a calendar export for reminders. */
-export function PlanCard({ plan, onChange, onOpenStop, onHelp }: Props) {
+export function PlanCard({ plan, onChange, onOpenStop, onHelp, onPractice }: Props) {
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const done = plan.steps.filter((s) => s.done).length;
@@ -66,6 +77,7 @@ export function PlanCard({ plan, onChange, onOpenStop, onHelp }: Props) {
                     <Markdown text={s.detail} />
                   </span>
                 )}
+                {s.sessions && !s.done && <Practice step={s} onPractice={() => onPractice(s)} onLog={() => onChange(logSession(plan, s.id))} />}
                 <span className="plan-step-due">
                   <span>
                     By {dateFormat.format(new Date(`${s.due}T12:00:00`))}
@@ -130,18 +142,29 @@ function StepEditor({
   const [title, setTitle] = useState(step.title);
   const [detail, setDetail] = useState(step.detail);
   const [due, setDue] = useState(step.due);
+  const [spaced, setSpaced] = useState(Boolean(step.sessions));
   return (
     <form
       className="plan-editor"
       onSubmit={(e) => {
         e.preventDefault();
-        if (title.trim()) onSave({ title: title.trim(), detail: detail.trim(), due: due || step.due });
+        if (title.trim())
+          onSave({
+            title: title.trim(),
+            detail: detail.trim(),
+            due: due || step.due,
+            sessions: spaced ? (step.sessions ?? sessionsFrom(new Date())) : undefined,
+          });
       }}
     >
       <input className="field" value={title} aria-label="Step title" onChange={(e) => setTitle(e.target.value)} autoFocus />
       <textarea className="field area" rows={2} value={detail} aria-label="Details" placeholder="Details (optional)" onChange={(e) => setDetail(e.target.value)} />
       <label className="plan-editor-due">
         By <input className="field" type="date" value={due} onChange={(e) => setDue(e.target.value)} />
+      </label>
+      <label className="plan-editor-spaced">
+        <input type="checkbox" checked={spaced} onChange={(e) => setSpaced(e.target.checked)} /> Practise this with spaced
+        repetition (short sessions after 1, 3, 7, 14 and 30 days)
       </label>
       <div className="plan-editor-actions">
         <button type="submit" className="top-button" disabled={!title.trim()}>
@@ -155,5 +178,38 @@ function StepEditor({
         </button>
       </div>
     </form>
+  );
+}
+
+const shortDate = new Intl.DateTimeFormat(undefined, { weekday: "short", day: "numeric", month: "short" });
+
+/** A learning step's practice sessions: when the next one is due, and ways to do it now. */
+function Practice({ step, onPractice, onLog }: { step: PlanStep; onPractice: () => void; onLog: () => void }) {
+  const sessions = step.sessions ?? [];
+  const next = nextSession(step);
+  const done = sessions.filter((s) => s.done).length;
+  const today = new Date().toISOString().slice(0, 10);
+  const overdue = next && next.due <= today;
+  return (
+    <span className="plan-practice">
+      <span className="plan-dots" aria-label={`${done} of ${sessions.length} practice sessions done`}>
+        {sessions.map((s, i) => (
+          <span key={i} data-done={Boolean(s.done)} />
+        ))}
+      </span>
+      <span className={overdue ? "plan-practice-next due" : "plan-practice-next"}>
+        {next ? (overdue ? "Practice due" : `Next practice ${shortDate.format(new Date(`${next.due}T12:00:00`))}`) : "All practice sessions done"}
+      </span>
+      {next && (
+        <>
+          <button type="button" className="linkish" onClick={onPractice}>
+            Practise now
+          </button>
+          <button type="button" className="linkish" onClick={onLog}>
+            Did a session
+          </button>
+        </>
+      )}
+    </span>
   );
 }
