@@ -48,7 +48,15 @@ Steps must be concrete and specific to this person and this job: name the actual
 what to build or learn and how to show it, who to talk to, and when to start applying. Give each step a realistic \
 week to aim for. Prefer steps they can start this week. After saving, say in one or two sentences that the plan is \
 in their plan panel, where they can tick steps off and add reminders to their calendar; don't repeat every step. \
-If they ask to change the plan, call save_plan again with the whole revised plan.
+If they ask to change the plan, call save_plan again with the whole revised plan; steps they added themselves are \
+kept automatically, so don't repeat them.
+- web_search finds real, current resources: courses, practice sites, programs, meetups, events, people to follow. \
+Use it for plan steps and for "help me start" requests, not for facts the job data already covers (pay, growth, AI \
+exposure, moves). Link what you recommend as Markdown links, prefer free or well-known options, and say when \
+something costs money. Keep it to a few good options rather than a long list.
+- When they ask for help starting a step of their plan: find 2 or 3 concrete resources with web_search, suggest a \
+first small action they can do this week, and add the resources to that step with update_step.
+- When drafting a plan, you may include a link or two in a step's detail if you searched for them.
 - End every reply by calling suggest_replies with 2 or 3 short things the person might say next, in their own voice \
 ("Make me a plan for this", "What about remote roles?"). If you asked them a question, offer likely answers. If \
 something important about them is still unknown (what they want from a change, years of experience, their city, \
@@ -138,6 +146,19 @@ TOOLS = [
         },
     },
     {
+        "name": "update_step",
+        "description": ("App action: add to one step of their saved plan, e.g. resources you found for it. Identify the "
+                        "step by its exact title."),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "The step's current title, exactly as in their plan."},
+                "add_detail": {"type": "string", "description": "Text appended to the step's details; Markdown links allowed."},
+            },
+            "required": ["title", "add_detail"],
+        },
+    },
+    {
         "name": "suggest_replies",
         "description": "App action: show 2-3 tappable suggestions for the person's next message. Call it once, last.",
         "input_schema": {
@@ -169,12 +190,26 @@ TOOLS = [
     },
 ]
 
+APP_ACTIONS = {"suggest_replies", "update_step", "save_plan", "open_stop", "update_profile"}
+WEB_SEARCH_MAX_USES = 3   # per request round; $10 per 1,000 searches plus the result tokens
+
+
+def tools_for(location: dict | None) -> list[dict]:
+    """Our tools plus Claude's server-side web search, localized to the person's city when we know it."""
+    search = {"type": "web_search_20250305", "name": "web_search", "max_uses": WEB_SEARCH_MAX_USES}
+    if location and location.get("city"):
+        search["user_location"] = {"type": "approximate", "city": location["city"],
+                                   "country": (location.get("country") or "de").upper()}
+    return TOOLS + [search]
+
+
 TOOL_LABELS = {
     "search_jobs": lambda a: f"Searching jobs for “{a.get('query', '')}”",
     "recommend": lambda a: "Ranking next stops" + (" with different settings" if a else ""),
     "stop_details": lambda a: "Looking up a stop",
     "find_openings": lambda a: "Searching job boards" + (f" in {a['city']}" if a.get("city") else ""),
     "save_plan": lambda a: "Saving your plan",
+    "update_step": lambda a: "Updating your plan",
     "read_posting": lambda a: "Reading the posting",
     "open_stop": lambda a: "Opening the stop on the map",
     "update_profile": lambda a: "Updating your profile",
@@ -231,7 +266,8 @@ class Guide:
         except Exception as error:  # the chat still works without the summary
             lines.append(f"(Couldn't compute recommendations: {error})")
         if plan and plan.get("steps"):
-            steps = "; ".join(f"{'[done] ' if st.get('done') else ''}{st.get('title', '')}" for st in plan["steps"][:8])
+            steps = "; ".join(f"{'[done] ' if st.get('done') else ''}{'[added by them] ' if st.get('mine') else ''}"
+                              f"{st.get('title', '')}" for st in plan["steps"][:12])
             lines.append(f"Their saved plan, toward {plan.get('occupation', '?')} (census {plan.get('census')}): {steps}")
         if location:
             lines.append(f"Looking for work in: {location['city']} ({location['country']})")
@@ -290,6 +326,11 @@ class Guide:
             return {"ok": True, "saved_steps": len(steps)}, {
                 "type": "save_plan", "census": code, "occupation": e.census.at[code, "title"],
                 "summary": str(args.get("summary", ""))[:300], "steps": steps}
+        if name == "update_step":
+            title, detail = str(args.get("title", "")).strip(), str(args.get("add_detail", "")).strip()[:1200]
+            if not title or not detail:
+                return {"error": "needs the step's title and the text to add"}, None
+            return {"ok": True}, {"type": "update_step", "title": title, "add_detail": detail}
         if name == "suggest_replies":
             replies = [str(r).strip()[:80] for r in (args.get("replies") or []) if str(r).strip()][:3]
             return {"ok": True}, ({"type": "suggest_replies", "replies": replies} if replies else None)
@@ -319,19 +360,26 @@ class Guide:
             convo = [{"role": m["role"], "content": m["content"]} for m in messages if m.get("content")]
             for _ in range(MAX_TOOL_ROUNDS):
                 with self.client.messages.stream(model=CHAT_MODEL, max_tokens=2500, system=system,
-                                                 tools=TOOLS, messages=convo) as stream:
-                    for text in stream.text_stream:
-                        yield event({"type": "text", "text": text})
+                                                 tools=tools_for(location), messages=convo) as stream:
+                    for ev in stream:
+                        if ev.type == "text":
+                            yield event({"type": "text", "text": ev.text})
+                        elif (ev.type == "content_block_start"
+                              and getattr(ev.content_block, "type", None) == "server_tool_use"):
+                            yield event({"type": "tool", "label": "Searching the web"})
                     final = stream.get_final_message()
+                # sent back unchanged: web search results carry encrypted content the API checks
                 convo.append({"role": "assistant", "content": [block.model_dump(exclude_none=True) for block in final.content]})
+                if final.stop_reason == "pause_turn":   # a long web search paused the turn: let Claude continue
+                    continue
                 if final.stop_reason != "tool_use":
                     break
-                results, only_suggestions = [], True
+                results, called = [], set()
                 for block in final.content:
                     if block.type != "tool_use":
                         continue
+                    called.add(block.name)
                     if block.name != "suggest_replies":   # suggestions are silent: no status line
-                        only_suggestions = False
                         label = TOOL_LABELS.get(block.name, lambda a: block.name)(block.input or {})
                         yield event({"type": "tool", "label": label})
                     try:
@@ -343,7 +391,9 @@ class Guide:
                         if action["type"] == "update_profile":   # later tool calls see the change
                             profile = _apply(profile, action)
                     results.append({"type": "tool_result", "tool_use_id": block.id, "content": _json(result)})
-                if only_suggestions:   # the reply is finished; no need for another round
+                # suggest_replies comes last: with only app actions beside it, the reply is finished and another
+                # round would just repeat itself. Data tools (search, details, openings) still need their answer.
+                if "suggest_replies" in called and called <= APP_ACTIONS:
                     break
                 convo.append({"role": "user", "content": results})
             yield event({"type": "done"})

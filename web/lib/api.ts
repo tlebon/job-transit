@@ -208,6 +208,7 @@ export type ChatMessage = { role: "user" | "assistant"; content: string };
 export type ChatAction =
   | { type: "open_stop"; census: number }
   | { type: "suggest_replies"; replies: string[] }
+  | { type: "update_step"; title: string; add_detail: string }
   | PlanAction
   | {
       type: "update_profile";

@@ -1,5 +1,6 @@
 // The person's plan for one move: drafted by the guide (save_plan), kept in this browser, ticked off here.
-export type PlanStep = { id: string; title: string; detail: string; due: string; done: boolean }; // due: YYYY-MM-DD
+// due: YYYY-MM-DD; mine: added by the person (kept when the guide revises the plan)
+export type PlanStep = { id: string; title: string; detail: string; due: string; done: boolean; mine?: boolean };
 export type Plan = { census: number; occupation: string; summary: string; created: string; steps: PlanStep[] };
 export type PlanAction = {
   type: "save_plan";
@@ -31,13 +32,15 @@ function isoDate(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-/** A plan from the guide's save_plan action. A revision of the same move keeps the ticks on steps with the same title. */
+/** A plan from the guide's save_plan action. A revision of the same move keeps the ticks on steps with the same
+ * title, and the steps the person added themselves. */
 export function planFromAction(action: PlanAction, previous: Plan | null): Plan {
   const today = new Date();
-  const doneBefore = new Set(
-    previous && previous.census === action.census ? previous.steps.filter((s) => s.done).map((s) => s.title.toLowerCase()) : [],
-  );
-  return {
+  const sameMove = previous && previous.census === action.census ? previous : null;
+  const doneBefore = new Set(sameMove ? sameMove.steps.filter((s) => s.done).map((s) => s.title.toLowerCase()) : []);
+  const newTitles = new Set(action.steps.map((s) => s.title.toLowerCase()));
+  const keptMine = sameMove ? sameMove.steps.filter((s) => s.mine && !newTitles.has(s.title.toLowerCase())) : [];
+  const plan: Plan = {
     census: action.census,
     occupation: action.occupation,
     summary: action.summary,
@@ -54,6 +57,23 @@ export function planFromAction(action: PlanAction, previous: Plan | null): Plan 
       };
     }),
   };
+  plan.steps.push(...keptMine);
+  return plan;
+}
+
+export function addStep(plan: Plan, title: string, weeks = 2): Plan {
+  const due = new Date();
+  due.setDate(due.getDate() + 7 * weeks);
+  const step: PlanStep = { id: `${Date.now().toString(36)}-mine`, title, detail: "", due: isoDate(due), done: false, mine: true };
+  return { ...plan, steps: [...plan.steps, step] };
+}
+
+export function updateStep(plan: Plan, id: string, patch: Partial<PlanStep>): Plan {
+  return { ...plan, steps: plan.steps.map((s) => (s.id === id ? { ...s, ...patch } : s)) };
+}
+
+export function removeStep(plan: Plan, id: string): Plan {
+  return { ...plan, steps: plan.steps.filter((s) => s.id !== id) };
 }
 
 // ---- calendar file (.ics): one all-day event per open step, with a 9:00 reminder that day ----------

@@ -25,7 +25,7 @@ import {
   type SortKey,
 } from "@/lib/api";
 import { educationYears } from "@/lib/travel";
-import { loadPlan, planFromAction, savePlan, type Plan } from "@/lib/plan";
+import { loadPlan, planFromAction, savePlan, updateStep, type Plan } from "@/lib/plan";
 
 const STORAGE_KEY = "job-transit-profile-v1";
 const ONBOARDED_KEY = "job-transit-onboarded-v1";
@@ -205,6 +205,15 @@ export default function Home() {
       return;
     }
     if (action.type === "suggest_replies") return; // shown in the chat itself
+    if (action.type === "update_step") {
+      if (!plan) return;
+      const wanted = action.title.trim().toLowerCase();
+      const step =
+        plan.steps.find((s) => s.title.trim().toLowerCase() === wanted) ??
+        plan.steps.find((s) => s.title.toLowerCase().includes(wanted) || wanted.includes(s.title.toLowerCase()));
+      if (step) setPlan(updateStep(plan, step.id, { detail: step.detail ? `${step.detail}\n\n${action.add_detail}` : action.add_detail }));
+      return;
+    }
     if (action.type === "open_stop") {
       setFocus({ census: action.census, at: Date.now() });
       return;
@@ -508,8 +517,11 @@ export default function Home() {
           {plan && (
             <PlanCard
               plan={plan}
-              onToggle={(id) => setPlan({ ...plan, steps: plan.steps.map((s) => (s.id === id ? { ...s, done: !s.done } : s)) })}
-              onRemove={() => setPlan(null)}
+              onChange={setPlan}
+              onHelp={(step) => {
+                setPendingQuestion(`Help me get started on this step of my plan: “${step.title}”`);
+                setChatMode(true);
+              }}
               onOpenStop={(census) => setFocus({ census, at: Date.now() })}
             />
           )}
