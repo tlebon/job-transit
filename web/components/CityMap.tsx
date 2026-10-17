@@ -332,7 +332,7 @@ export function CityMap({ city, stops, pins, path, selected, hovered, onSelect, 
         </button>
       </div>
       <MapKey />
-      {stops.size === 0 && <p className="city-hint">Tell us a little on the left and your next stops appear as pins.</p>}
+      {stops.size === 0 && <p className="city-hint">Tell us a little on the left and your next jobs appear as pins.</p>}
     </div>
   );
 }

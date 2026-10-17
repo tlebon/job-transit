@@ -155,7 +155,7 @@ export function Onboarding({
             <p className="modal-lede">Pick any that matter. They reorder your suggestions; nothing gets hidden.</p>
             <GoalPicker goals={profile.goals ?? []} onToggle={onToggleGoal} />
             <p className="modal-lede">
-              Then welcome to Job City: every block is a job, and neighbours need similar skills. Your best next stops
+              Then welcome to Job City: every block is a job, and neighbours need similar skills. Your best next jobs
               are the numbered pins. Click one to see what it is and how you’d get there.
             </p>
           </section>

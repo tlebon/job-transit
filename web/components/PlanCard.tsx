@@ -12,6 +12,7 @@ import {
   type Plan,
   type PlanStep,
 } from "@/lib/plan";
+import { EmailPlan } from "./EmailPlan";
 import { Markdown } from "./Markdown";
 
 type Props = {
@@ -77,6 +78,11 @@ export function PlanCard({ plan, onChange, onOpenStop, onHelp, onPractice }: Pro
                     <Markdown text={s.detail} />
                   </span>
                 )}
+                {s.resources && s.resources.length > 0 && !s.done && (
+                  <span className="plan-step-detail plan-resources">
+                    <Markdown text={s.resources.map((r) => `- ${r}`).join("\n")} />
+                  </span>
+                )}
                 {s.sessions && !s.done && <Practice step={s} onPractice={() => onPractice(s)} onLog={() => onChange(logSession(plan, s.id))} />}
                 <span className="plan-step-due">
                   <span>
@@ -112,13 +118,19 @@ export function PlanCard({ plan, onChange, onOpenStop, onHelp, onPractice }: Pro
         </button>
       </form>
       <div className="plan-actions">
+        <EmailPlan plan={plan} />
         {open && (
-          <button type="button" className="top-button" onClick={() => downloadIcs(plan)}>
-            Add reminders to calendar
+          <button
+            type="button"
+            className="linkish"
+            title="A .ics file: open it to add your steps and practice sessions to Apple, Google or Outlook calendar"
+            onClick={() => downloadIcs(plan)}
+          >
+            Download calendar file
           </button>
         )}
         <button type="button" className="linkish" onClick={() => onOpenStop(plan.census)}>
-          Open the stop
+          Show on the map
         </button>
         <button type="button" className="linkish" onClick={() => onChange(null)}>
           Remove plan

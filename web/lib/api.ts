@@ -179,6 +179,24 @@ export const api = {
       body: JSON.stringify({ census, city, country }),
       signal,
     }),
+  emailPlan: (email: string, plan: Plan, remind: boolean) =>
+    getJson<{ ok: boolean; token: string | null }>("/email/plan", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, plan, remind }),
+    }),
+  remindersOff: (token: string) =>
+    getJson<{ ok: boolean }>("/email/reminders/off", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token }),
+    }),
+  syncReminders: (token: string, plan: Plan) =>
+    getJson<{ ok: boolean }>("/email/reminders", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token, plan }),
+    }),
   recommend: (profile: Profile, sort: SortKey, signal?: AbortSignal) =>
     getJson<Recommendation>("/recommend", {
       method: "POST",
@@ -206,9 +224,9 @@ export const EMPTY_PROFILE: Profile = {
 // ---- the guide (chat) ----------------------------------------------------------------------
 export type ChatMessage = { role: "user" | "assistant"; content: string };
 export type ChatAction =
-  | { type: "open_stop"; census: number }
+  | { type: "open_job"; census: number }
   | { type: "suggest_replies"; replies: string[] }
-  | { type: "update_step"; title: string; add_detail: string }
+  | { type: "update_step"; title: string; resources: string[] }
   | { type: "log_practice"; title: string }
   | PlanAction
   | {

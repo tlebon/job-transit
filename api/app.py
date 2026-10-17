@@ -1,20 +1,22 @@
 """Job Transit API.  Run from the repo root:  uv run uvicorn api.app:app --reload --port 8000"""
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from api.chat import Guide
 from api.cv import read_cv
 from api.engine import Engine, Profile
+from api import mailer
 from api.openings import find_openings, start_collector
 
 app = FastAPI(title="Job Transit")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 engine = Engine()
 start_collector(engine)   # job board postings, collected in the background (api/openings.py)
+mailer.start_reminder_sender()   # emails what's due in people's plans (api/mailer.py)
 guide = None  # created on first chat, so the API starts without an Anthropic key
 
 
@@ -164,6 +166,62 @@ def openings(body: OpeningsIn):
     if body.census not in engine.position:
         raise HTTPException(400, "Unknown occupation code")
     return find_openings(engine, body.census, body.city.strip(), body.country)
+
+
+class EmailPlanIn(BaseModel):
+    email: str = Field(max_length=200)
+    plan: dict
+    remind: bool = False   # also email when steps and practice sessions are due
+
+
+class SyncIn(BaseModel):
+    token: str = Field(max_length=80)
+    plan: dict
+
+
+@app.post("/email/plan")
+def email_plan(body: EmailPlanIn, request: Request):
+    """Email the plan now; with remind, also store the dates and email when they're due."""
+    email = body.email.strip().lower()
+    if not mailer.valid_email(email):
+        raise HTTPException(400, "That doesn't look like an email address.")
+    client = request.client.host if request.client else "?"
+    if not (mailer.allowed(f"ip:{client}", 5, 3600) and mailer.allowed(f"to:{email}", 5, 86400)):
+        raise HTTPException(429, "Too many emails for now. Try again later.")
+    token = mailer.subscribe(email, body.plan) if body.remind else None
+    subject, body_html, body_text = mailer.plan_email(body.plan, token)
+    try:
+        mailer.send(email, subject, body_html, body_text)
+    except mailer.EmailError as error:
+        if token:
+            mailer.unsubscribe(token)
+        raise HTTPException(502, str(error))
+    return {"ok": True, "token": token}
+
+
+@app.post("/email/reminders")
+def sync_reminders(body: SyncIn):
+    """The plan changed in the app: update the stored reminder dates (no email is sent)."""
+    if not mailer.sync(body.token, body.plan):
+        raise HTTPException(404, "No reminders for that token.")
+    return {"ok": True}
+
+
+class TokenIn(BaseModel):
+    token: str = Field(max_length=80)
+
+
+@app.post("/email/reminders/off")
+def reminders_off(body: TokenIn):
+    """Turn reminders off from the app: deletes the address and its reminders."""
+    return {"ok": mailer.unsubscribe(body.token)}
+
+
+@app.get("/email/unsubscribe", response_class=HTMLResponse)
+def unsubscribe(token: str):
+    done = mailer.unsubscribe(token)
+    message = "Your reminders are stopped and your email address is deleted." if done else "There were no reminders for this link."
+    return f'<html><body style="font-family:system-ui;max-width:480px;margin:60px auto"><h2>Job Transit</h2><p>{message}</p></body></html>'
 
 
 class ChatMessage(BaseModel):

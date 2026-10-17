@@ -6,7 +6,7 @@ import { PlanCard } from "@/components/PlanCard";
 import { CvReader, type CvApply } from "@/components/CvReader";
 import { JobTitles, type Title } from "@/components/JobTitles";
 import { Leg } from "@/components/Leg";
-import { GoalPicker } from "@/components/GoalPicker";
+import { GOALS, GoalPicker } from "@/components/GoalPicker";
 import { AskBar } from "@/components/AskBar";
 import { ChatPanel, type Turn } from "@/components/ChatPanel";
 import { ChipGroups } from "@/components/ChipGroups";
@@ -216,10 +216,10 @@ export default function Home() {
     if (action.type === "update_step") {
       if (!plan) return;
       const step = findStep(plan, action.title);
-      if (step) setPlan(updateStep(plan, step.id, { detail: step.detail ? `${step.detail}\n\n${action.add_detail}` : action.add_detail }));
+      if (step) setPlan(updateStep(plan, step.id, { resources: action.resources }));
       return;
     }
-    if (action.type === "open_stop") {
+    if (action.type === "open_job") {
       setFocus({ census: action.census, at: Date.now() });
       return;
     }
@@ -310,7 +310,7 @@ export default function Home() {
       <header className="topbar">
         <Logo />
         <span className="brand">Job Transit</span>
-        <span className="tagline">Plan your next stop</span>
+        <span className="tagline">Plan your next job</span>
         <span className="topbar-actions">
           <button type="button" className="top-button top-guide" onClick={() => setChatMode(!chatMode)}>
             {chatMode ? "Map view" : "Ask the guide"}
@@ -348,11 +348,15 @@ export default function Home() {
       <main className={chatMode ? `workspace${drawerOpen ? " workspace-drawer" : ""}` : drawerOpen ? "layout" : "layout layout-full"}>
         {drawerOpen && (
         <div className="planner">
+          <div className="profile-head">
+            <h2>Your profile</h2>
+            <p className="q-help">The guide fills this in as you chat. Click any part to change it.</p>
+          </div>
+          <div className="profile-card">
           <Leg
-            title={cv ? "From your CV" : "Start from your CV"}
-            hint={cv ? "What we read from it. Remove anything that doesn’t fit." : "Fills in your roles, education and skills"}
-            status={cv ? "Added" : "Optional"}
-            done={cv !== null}
+            title="Your CV"
+            value={cv ? <span className="clamp">{cv.summary}</span> : undefined}
+            empty="Add your CV to fill in your roles, education and skills"
           >
             {cv ? (
               <div className="cv-summary">
@@ -395,9 +399,21 @@ export default function Home() {
 
           <Leg
             title="Your work"
-            hint="Job title and what the work actually involves"
-            status={titles.length || profile.description ? "Set" : "Optional"}
-            done={profile.job !== null || Boolean(profile.description)}
+            value={
+              titles.length || profile.description || profile.experience_years !== null ? (
+                <>
+                  {(titles.length > 0 || profile.experience_years !== null) && (
+                    <span className="leg-line">
+                      {titles.length > 0 && <strong>{titles.map((t) => t.label).join(" · ")}</strong>}
+                      {profile.experience_years !== null &&
+                        `${titles.length > 0 ? " · " : ""}${yearsText(profile.experience_years)}`}
+                    </span>
+                  )}
+                  {profile.description && <span className="clamp">{profile.description}</span>}
+                </>
+              ) : undefined
+            }
+            empty="Your job title and what the work actually involves"
           >
             <JobTitles titles={titles} onChange={setTitles} />
             <label className="cv-row">
@@ -419,10 +435,24 @@ export default function Home() {
           </Leg>
 
           <Leg
-            title="What interests you?"
-            hint="Hobbies, and topics you enjoy or would like to work with"
-            status={profile.chips.length ? `${profile.chips.length} picked` : "Optional"}
-            done={profile.chips.length > 0}
+            title="Interests"
+            value={
+              profile.chips.length || profile.hobbies ? (
+                <>
+                  {profile.hobbies && <span className="clamp">{profile.hobbies}</span>}
+                  {profile.chips.length > 0 && (
+                    <span className="chips">
+                      {profile.chips.map((c) => (
+                        <span key={c} className="chip static small">
+                          {c}
+                        </span>
+                      ))}
+                    </span>
+                  )}
+                </>
+              ) : undefined
+            }
+            empty="Hobbies, and topics you enjoy or would like to work with"
           >
             <label className="cv-row">
               <span className="q-text">What do you do for fun?</span>
@@ -440,20 +470,15 @@ export default function Home() {
           </Leg>
 
           <Leg
-            title="What do you want from a change?"
-            hint="Pick any. It changes the order of your stops, never what you can see."
-            status={profile.goals.length ? `${profile.goals.length} picked` : "Optional"}
-            done={profile.goals.length > 0}
+            title="What you want from a change"
+            value={profile.goals.length ? GOALS.filter((g) => profile.goals.includes(g.id)).map((g) => g.label).join(" · ") : undefined}
+            empty="More pay, a growing field, less AI, room for what you love"
           >
+            <p className="q-help">Pick any. It changes the order of your next jobs, never what you can see.</p>
             <GoalPicker goals={profile.goals} onToggle={toggleGoal} />
           </Leg>
 
-          <Leg
-            title="Highest education"
-            hint="Used to show what each move would take"
-            status={profile.education ? "Set" : "Optional"}
-            done={profile.education !== null}
-          >
+          <Leg title="Education" value={profile.education ?? undefined} empty="Used to show what each move would take">
             <select
               className="field"
               aria-label="Highest education completed"
@@ -468,9 +493,10 @@ export default function Home() {
               ))}
             </select>
           </Leg>
+          </div>
 
           <div className="profile-file">
-            <span className="q-help">Nothing is stored on our side. Save your profile to pick it up on another device.</span>
+            <span className="q-help">Your profile stays in this browser. Save it to a file to pick it up on another device.</span>
             <div className="profile-file-actions">
               <button type="button" className="linkish" onClick={saveToFile}>
                 Save to a file
@@ -538,4 +564,9 @@ export default function Home() {
       </main>
     </>
   );
+}
+
+function yearsText(years: number) {
+  if (years < 1) return "under a year of experience";
+  return `${Math.round(years)} year${Math.round(years) === 1 ? "" : "s"} of experience`;
 }

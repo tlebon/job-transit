@@ -4,25 +4,26 @@ import type { ReactNode } from "react";
 
 type Props = {
   title: string;
-  hint: string;
-  status: string;
-  done: boolean;
+  value?: ReactNode; // what we know, shown while closed; empty → the placeholder
+  empty: string; // what this part is for, when nothing is known yet
   defaultOpen?: boolean;
-  children: ReactNode;
+  children: ReactNode; // the editor, shown when opened
 };
 
-/** One optional step of the journey planner. Collapsible; the dot fills once something is answered. */
-export function Leg({ title, hint, status, done, defaultOpen, children }: Props) {
+/** One part of the profile: shows what we know at a glance, opens to edit it. */
+export function Leg({ title, value, empty, defaultOpen, children }: Props) {
+  const known = value !== undefined && value !== null && value !== false && value !== "";
   return (
-    <details className="leg" data-done={done} open={defaultOpen}>
+    <details className="leg" data-done={known} open={defaultOpen}>
       <summary>
-        <span className="leg-dot" aria-hidden="true" />
-        <span>
+        <span className="leg-text">
           <span className="leg-title">{title}</span>
-          <br />
-          <span className="leg-hint">{hint}</span>
+          {known ? <span className="leg-value">{value}</span> : <span className="leg-hint">{empty}</span>}
         </span>
-        <span className="leg-status">{status}</span>
+        <span className="leg-status">
+          <span className="leg-closed">{known ? "Edit" : "Add"}</span>
+          <span className="leg-opened">Done</span>
+        </span>
       </summary>
       <div className="leg-body">{children}</div>
     </details>

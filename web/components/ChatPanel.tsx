@@ -34,7 +34,7 @@ type Props = {
   plan?: Plan | null; // sent along so the guide can discuss and revise it
 };
 
-/** The guide: a chat grounded in the planner's data, which can also open stops and update the profile. */
+/** The guide: a chat grounded in the planner's data, which can also open jobs and update the profile. */
 export function ChatPanel({ turns, setTurns, profile, selected, onAction, pendingQuestion, onPendingSent, plan }: Props) {
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
@@ -150,7 +150,7 @@ export function ChatPanel({ turns, setTurns, profile, selected, onAction, pendin
     <section className="chat" aria-label="The guide">
       <header className="chat-head">
         <strong>The guide</strong>
-        <span className="q-help">Answers come from the same data as the map, and it can open stops and update your profile.</span>
+        <span className="q-help">Answers come from the same data as the map, and it can open jobs on the map and update your profile.</span>
         {turns.length > 0 && !busy && (
           <button type="button" className="linkish" onClick={() => setTurns(() => [])}>
             New conversation

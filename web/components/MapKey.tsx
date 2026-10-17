@@ -38,7 +38,7 @@ export function MapKey() {
             </li>
             <li>
               <span className="key-pin" aria-hidden="true">1</span>
-              Suggested next stop
+              Suggested next job
             </li>
             <li>
               <span className="key-area" aria-hidden="true" />

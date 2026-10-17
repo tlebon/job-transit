@@ -1,10 +1,10 @@
 """The guide: a chat assistant grounded in the planner's own data.
 
-Claude gets tools that wrap the engine (job search, recommendations, stop details) plus "app actions" that change
-what the person sees (open a stop, update their profile). The reply streams to the browser as server-sent events:
+Claude gets tools that wrap the engine (job search, recommendations, job details) plus "app actions" that change
+what the person sees (open a job on the map, update their profile). The reply streams to the browser as server-sent events:
   {"type": "text", "text": ...}          a piece of the answer
   {"type": "tool", "label": ...}         what the guide is looking up (shown as a status line)
-  {"type": "action", "action": {...}}    something the app should do (open a stop, change the profile)
+  {"type": "action", "action": {...}}    something the app should do (open a job, change the profile)
   {"type": "error", "message": ...} / {"type": "done"}
 Configure with ANTHROPIC_API_KEY and optionally CHAT_MODEL in .env.
 """
@@ -25,7 +25,7 @@ MAX_TOOL_ROUNDS = 6
 GOALS = ["pay", "stability", "less_ai", "passion"]
 
 SYSTEM = """You are the guide in Job Transit, an app that helps people plan a career change. The app shows a map \
-("Job City") where every block is an occupation and neighbours need similar skills; the person's next stops are \
+("Job City") where every block is an occupation and neighbours need similar skills; the person's next jobs are \
 ranked by real US job moves (Current Population Survey 2015-2021), skill fit, their interests and their goals.
 
 How to work:
@@ -34,7 +34,7 @@ Never invent numbers. If the data doesn't cover something, say so.
 - General advice (how to learn a skill, how to network, what a portfolio should show) is fine, but say it is general \
 advice rather than something from the data.
 - Be concise and concrete: short paragraphs or a short list; plain words; no hype.
-- Use app actions when they help the person see things: open the stop you are discussing; update their profile when \
+- Use app actions when they help the person see things: open the job you are discussing; update their profile when \
 they tell you something new about themselves (goals, hobbies, experience, a second job title). Say what you changed.
 - Be honest about limits: the data places people by the kind of work, not seniority; some jobs (product designer, \
 consultant) only exist inside broad census groups; pay and growth are US figures.
@@ -42,7 +42,7 @@ consultant) only exist inside broad census groups; pay and growth are US figures
 Show a few concrete postings with their links. For counts, use by_place (in their city / remote / elsewhere), not \
 total_matched alone. If a source wasn't searched, pass on its reason (for example "still loading after a restart, try \
 again in a few minutes"). Use the person's city unless they ask about another place.
-- A stop marked your_title is one of the person's own job titles, not a move.
+- A job marked your_title is one of the person's own job titles, not a move.
 - Before the first plan for a move, if you don't know it yet, ask how much time they can give it (hours a week) and \
 when they would like to have switched; offer typical answers as suggestions ("A few hours a week", "Evenings and \
 weekends", "I can study full-time"). Base every step's week on their answer, say the dates are a suggestion, and \
@@ -52,19 +52,23 @@ words ("you'd be starting from scratch on building and construction") and turn i
 - Pay, growth and AI figures come from the US Bureau of Labor Statistics (BLS). They are good for comparing jobs with \
 each other (which pays more, which is growing), so use them that way and always say they are US figures. Don't present \
 a US salary as what they would earn where they live; if local pay matters, look it up with web_search.
-- When they ask for a plan for a move: call stop_details for that stop first, then save_plan with 3 to 6 steps. \
+- When they ask for a plan for a move: call job_details for that job first, then save_plan with 3 to 6 steps. \
 Steps must be concrete and specific to this person and this job: name the actual skills from the gaps and tasks, \
 what to build or learn and how to show it, who to talk to, and when to start applying. Give each step a realistic \
 week to aim for. Prefer steps they can start this week. After saving, say in one or two sentences that the plan is \
-in their plan panel, where they can tick steps off and add reminders to their calendar; don't repeat every step. \
+in their plan panel, where they can tick steps off; then ask whether they'd like email reminders when steps \
+and practice sessions are due (they turn them on with "Get email reminders" in the plan panel). Don't repeat every \
+step. \
 If they ask to change the plan, call save_plan again with the whole revised plan; steps they added themselves are \
 kept automatically, so don't repeat them.
 - web_search finds real, current resources: courses, practice sites, programs, meetups, events, people to follow. \
 Use it for plan steps and for "help me start" requests, not for facts the job data already covers (pay, growth, AI \
 exposure, moves). Link what you recommend as Markdown links, prefer free or well-known options, and say when \
 something costs money. Keep it to a few good options rather than a long list.
-- When they ask for help starting a step of their plan: find 2 or 3 concrete resources with web_search, suggest a \
-first small action they can do this week, and add the resources to that step with update_step.
+- When they ask for help starting a step of their plan: find 2 or 3 concrete resources with web_search and answer \
+in your reply: the resources with a line each on why, a first small action for this week, and anything you offer \
+to draft (an email, a message) written out in full in the reply itself. Then save just the links on the step with \
+update_step. Your reply is what they read; never point to "the chat" or "below" for something you haven't written.
 - When drafting a plan, you may include a link or two in a step's detail if you searched for them. Mark steps that \
 build a skill or knowledge as kind "learn": the app schedules short practice sessions for them after 1, 3, 7, 14 and \
 30 days (spaced repetition), with reminders.
@@ -72,10 +76,13 @@ build a skill or knowledge as kind "learn": the app schedules short practice ses
 one question or give one small exercise at a time, wait for their answer, give brief feedback, and adjust the \
 difficulty; 3 to 5 questions in total, mixing recall with applying it. Base it on what that step is about and what \
 they have practised before. When the session is done, call log_practice with the step's title and say when the \
-next session is due. If they only want to mark a session as done, call log_practice.
-- End every reply by calling suggest_replies, on its own, after you have written your final text: never in the \
+next session is due. If they only want to mark a session as done, call log_practice. In a practice session, either ask an open \
+question and skip suggest_replies (they type the answer; recalling it is the point), or ask a real multiple-choice \
+question: then suggest_replies holds 3 options, the right one plus two plausible wrong ones, in random order, \
+written alike so the right one doesn't stand out. Mix both kinds. Never put a lone answer next to filler options.
+- End every reply (except an open practice question) by calling suggest_replies, on its own, after you have written your final text: never in the \
 same step as another tool. Give it 2 or 3 short things the person might say next, in their own voice \
-("Make me a plan for this", "What about remote roles?"). If you asked them a question, offer likely answers. If \
+("Make me a plan for this", "What about remote roles?"). If you asked them a question about themselves, offer likely answers (never for quiz or practice questions). If \
 something important about them is still unknown (what they want from a change, years of experience, their city, \
 what they enjoy), make one suggestion a quick way to tell you ("I care most about pay").
 - Occupations are identified by census codes; get them from search_jobs or recommend, never guess them.
@@ -93,7 +100,7 @@ TOOLS = [
     },
     {
         "name": "recommend",
-        "description": ("Ranked next stops for the person, optionally with changes to their profile to explore "
+        "description": ("Ranked next jobs for the person, optionally with changes to their profile to explore "
                         "'what if' (different goals, a different starting job, more experience). Does not change "
                         "the app; use update_profile for that."),
         "input_schema": {
@@ -109,7 +116,7 @@ TOOLS = [
         },
     },
     {
-        "name": "stop_details",
+        "name": "job_details",
         "description": ("Everything about one destination relative to where the person starts: what the job is, "
                         "how common the move is, skill gaps and what transfers, pay change, growth, AI exposure, "
                         "entry education and experience needed."),
@@ -167,15 +174,18 @@ TOOLS = [
     },
     {
         "name": "update_step",
-        "description": ("App action: add to one step of their saved plan, e.g. resources you found for it. Identify the "
-                        "step by its exact title."),
+        "description": ("App action: set the resource links shown under one step of their plan (replaces that step's "
+                        "earlier resources). Only links with a few words each; the explanation belongs in your reply."),
         "input_schema": {
             "type": "object",
             "properties": {
                 "title": {"type": "string", "description": "The step's current title, exactly as in their plan."},
-                "add_detail": {"type": "string", "description": "Text appended to the step's details; Markdown links allowed."},
+                "resources": {"type": "array", "maxItems": 5,
+                              "items": {"type": "string",
+                                        "description": "One resource as a Markdown link plus a few words, e.g. "
+                                                       "'[SQLBolt](https://sqlbolt.com): free interactive lessons'."}},
             },
-            "required": ["title", "add_detail"],
+            "required": ["title", "resources"],
         },
     },
     {
@@ -195,8 +205,8 @@ TOOLS = [
         },
     },
     {
-        "name": "open_stop",
-        "description": "App action: open a destination's stop page on the map so the person can see it.",
+        "name": "open_job",
+        "description": "App action: open a job's page on the map so the person can see it.",
         "input_schema": {"type": "object", "properties": {"census": {"type": "integer"}}, "required": ["census"]},
     },
     {
@@ -230,14 +240,14 @@ def tools_for(location: dict | None) -> list[dict]:
 
 TOOL_LABELS = {
     "search_jobs": lambda a: f"Searching jobs for “{a.get('query', '')}”",
-    "recommend": lambda a: "Ranking next stops" + (" with different settings" if a else ""),
-    "stop_details": lambda a: "Looking up a stop",
+    "recommend": lambda a: "Ranking next jobs" + (" with different settings" if a else ""),
+    "job_details": lambda a: "Looking up the job",
     "find_openings": lambda a: "Searching job boards" + (f" in {a['city']}" if a.get("city") else ""),
     "save_plan": lambda a: "Saving your plan",
     "update_step": lambda a: "Updating your plan",
     "log_practice": lambda a: "Logging your practice session",
     "read_posting": lambda a: "Reading the posting",
-    "open_stop": lambda a: "Opening the stop on the map",
+    "open_job": lambda a: "Opening the job on the map",
     "update_profile": lambda a: "Updating your profile",
 }
 
@@ -287,7 +297,7 @@ class Guide:
             if rec.get("origin"):
                 lines.append(f"Placed at: {rec['origin']['title']}")
             if rec.get("results"):
-                lines.append("Their top stops now: " + "; ".join(
+                lines.append("Their top next jobs now: " + "; ".join(
                     f"{r['title']} (census {r['census']}, {r.get('reach_label', '')})" for r in rec["results"][:8]))
         except Exception as error:  # the chat still works without the summary
             lines.append(f"(Couldn't compute recommendations: {error})")
@@ -305,7 +315,7 @@ class Guide:
         if location:
             lines.append(f"Looking for work in: {location['city']} ({location['country']})")
         if selected is not None and selected in e.position:
-            lines.append(f"They are looking at the stop page for: {e.census.at[selected, 'title']} (census {selected})")
+            lines.append(f"They are looking at the job page for: {e.census.at[selected, 'title']} (census {selected})")
         return "\n".join(lines) or "They haven't told the app anything yet."
 
     def run_tool(self, name: str, args: dict, profile: Profile, location: dict | None = None):
@@ -322,9 +332,9 @@ class Guide:
             origin = rec.get("origin") or {}
             own = {asked.job, *asked.extra_jobs}
             return {"starting_from": origin.get("title"), "mix": origin.get("mix"),
-                    "stops": [_job_summary(r) | ({"your_title": True} if r["census"] in own else {})
+                    "jobs": [_job_summary(r) | ({"your_title": True} if r["census"] in own else {})
                               for r in rec["results"]]}, None
-        if name == "stop_details":
+        if name == "job_details":
             code = args.get("census")
             if code not in e.position:
                 return {"error": "unknown census code; use search_jobs"}, None
@@ -361,21 +371,22 @@ class Guide:
                 "type": "save_plan", "census": code, "occupation": e.census.at[code, "title"],
                 "summary": str(args.get("summary", ""))[:300], "steps": steps}
         if name == "update_step":
-            title, detail = str(args.get("title", "")).strip(), str(args.get("add_detail", "")).strip()[:1200]
-            if not title or not detail:
-                return {"error": "needs the step's title and the text to add"}, None
-            return {"ok": True}, {"type": "update_step", "title": title, "add_detail": detail}
+            title = str(args.get("title", "")).strip()
+            resources = [str(r).strip()[:300] for r in (args.get("resources") or []) if str(r).strip()][:5]
+            if not title or not resources:
+                return {"error": "needs the step's title and at least one resource"}, None
+            return {"ok": True}, {"type": "update_step", "title": title, "resources": resources}
         if name == "log_practice":
             title = str(args.get("title", "")).strip()
             return ({"ok": True}, {"type": "log_practice", "title": title}) if title else ({"error": "needs the step title"}, None)
         if name == "suggest_replies":
             replies = [str(r).strip()[:80] for r in (args.get("replies") or []) if str(r).strip()][:3]
             return {"ok": True}, ({"type": "suggest_replies", "replies": replies} if replies else None)
-        if name == "open_stop":
+        if name == "open_job":
             code = args.get("census")
             if code not in e.position:
                 return {"error": "unknown census code"}, None
-            return {"ok": True, "opened": e.census.at[code, "title"]}, {"type": "open_stop", "census": code}
+            return {"ok": True, "opened": e.census.at[code, "title"]}, {"type": "open_job", "census": code}
         if name == "update_profile":
             change = {k: args[k] for k in ("goals", "hobbies", "experience_years", "add_title") if k in args}
             if "add_title" in change:

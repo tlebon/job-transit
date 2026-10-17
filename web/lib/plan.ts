@@ -10,6 +10,7 @@ export type PlanStep = {
   done: boolean;
   mine?: boolean;
   sessions?: Session[];
+  resources?: string[]; // Markdown links the guide found for this step ("Help me start"); replaced, not appended
 };
 export type Plan = { census: number; occupation: string; summary: string; created: string; steps: PlanStep[] };
 export type PlanAction = {

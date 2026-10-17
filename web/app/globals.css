@@ -78,23 +78,32 @@ button, input, select, textarea { font: inherit; color: inherit; }
 
 /* ---- journey planner ---- */
 .planner { display: flex; flex-direction: column; gap: 12px; }
-.leg {
-  background: var(--panel); border: 1px solid var(--rule); border-radius: var(--radius-m);
-}
+.profile-head h2 { margin: 0; font-size: 20px; }
+.profile-head p { margin: 2px 0 0; }
+.profile-card { background: var(--panel); border: 1px solid var(--rule); border-radius: var(--radius-m); }
+.leg + .leg { border-top: 1px solid var(--rule); }
 .leg > summary {
-  list-style: none; cursor: pointer; display: grid; grid-template-columns: 26px 1fr auto;
-  gap: 12px; align-items: center; padding: 14px 16px;
+  list-style: none; cursor: pointer; display: grid; grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px; align-items: start; padding: 14px 16px;
 }
 .leg > summary::-webkit-details-marker { display: none; }
-.leg-dot {
-  width: 22px; height: 22px; border-radius: 50%; border: 4px solid var(--ink-3); background: var(--panel);
-}
-.leg[data-done="true"] .leg-dot { border-color: var(--ink); background: var(--signal); }
-.leg-title { font-weight: 700; font-size: 17px; }
+.leg > summary:hover .leg-status { color: var(--ink); text-decoration: underline; }
+.leg-text { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.leg-title { font-weight: 700; font-size: 13px; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.05em; }
+.leg-value { display: flex; flex-direction: column; gap: 6px; color: var(--ink); font-size: 15px; }
+.leg-value strong { font-weight: 700; }
+.leg-line { color: var(--ink-2); }
+.leg-line strong { color: var(--ink); }
 .leg-hint { color: var(--ink-3); font-size: 14px; }
-.leg-status { color: var(--ink-2); font-size: 14px; white-space: nowrap; }
-.leg-body { padding: 0 16px 16px 54px; display: flex; flex-direction: column; gap: 12px; }
-@media (max-width: 520px) { .leg-body { padding-left: 16px; } }
+.leg-status { color: var(--ink-2); font-size: 14px; white-space: nowrap; padding-top: 1px; }
+.leg-opened { display: none; }
+.leg[open] .leg-opened { display: inline; }
+.leg[open] .leg-closed { display: none; }
+.leg[open] .leg-value { display: none; }
+.leg[open] .leg-hint { display: none; }
+.leg-body { padding: 0 16px 16px; display: flex; flex-direction: column; gap: 12px; }
+.clamp { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; color: var(--ink-2); }
+.chip.static.small { font-size: 13px; padding: 2px 8px; }
 
 .field { width: 100%; height: 42px; padding: 0 12px; border: 1px solid var(--rule); border-radius: var(--radius-s); background: var(--paper); }
 .field:focus { border-color: var(--ink); }
@@ -268,6 +277,13 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .legend h2 { margin: 0 0 8px; font-size: 18px; color: var(--ink); }
 .legend p { margin: 0 0 10px; }
 .side { min-width: 0; }
+/* the plan beside the map: the column scrolls on its own, as tall as the map */
+.board-body-plan .side { max-height: min(74vh, 780px); overflow: auto; overscroll-behavior: contain; padding-right: 2px; }
+@media (max-width: 1100px) { .board-body-plan .side { max-height: none; overflow: visible; } }
+.side-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--rule); margin-bottom: 10px; position: sticky; top: 0; background: var(--panel); z-index: 1; }
+.side-tabs button { padding: 8px 12px; border: 0; background: none; color: var(--ink-2); font-weight: 700; font-size: 15px; border-bottom: 3px solid transparent; margin-bottom: -1px; cursor: pointer; }
+.side-tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--signal); }
+.side-tabs button:hover { color: var(--ink); }
 .stop-list, .route-card {
   background: var(--panel); border: 1px solid var(--rule); border-radius: var(--radius-m); padding: 10px;
   max-height: min(72vh, 760px); overflow: auto;
@@ -492,6 +508,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .plan-step-detail ul { list-style: disc; }
 .plan-step-detail ol { list-style: decimal; }
 .plan-step-detail li { margin: 2px 0; }
+.plan-resources ul { margin-top: 0; }
 .plan-step-detail a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
 .plan-step-due { color: var(--ink-3); font-size: 13px; display: flex; gap: 10px; align-items: baseline; }
 .plan-edit { font-size: 13px; }
@@ -513,3 +530,13 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .plan-practice-next.due { color: var(--warn); font-weight: 700; }
 .plan-editor-spaced { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; color: var(--ink-2); }
 .plan-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding-top: 10px; border-top: 1px solid var(--rule-soft); }
+
+/* email me this plan */
+.email-plan { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; flex-basis: 100%; }
+.email-form { display: flex; flex-direction: column; gap: 6px; width: 100%; }
+.email-form .field { height: 38px; }
+.email-remind { display: flex; gap: 8px; align-items: center; font-size: 14px; }
+.email-actions { display: flex; align-items: center; gap: 14px; }
+.email-sent { flex-basis: 100%; margin: 0; }
+.board-body-plan .plan-label { display: none; }
+@media (max-width: 520px) { .topbar { flex-wrap: wrap; row-gap: 10px; } .topbar-actions { margin-left: 0; width: 100%; } .topbar-actions .linkish { margin-left: auto; } }

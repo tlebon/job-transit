@@ -209,7 +209,7 @@ export function StopPage({ stop, request, start, schooling, hasEducation, onPlan
         <button type="button" className="action" onClick={onPlan}>
           Plan this move
         </button>
-        <span className="q-help">The guide drafts concrete steps you can tick off, with reminders for your calendar.</span>
+        <span className="q-help">The guide drafts concrete steps you can tick off, with email reminders or a calendar file.</span>
       </div>
     </article>
   );

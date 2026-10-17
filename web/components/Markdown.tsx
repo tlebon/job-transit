@@ -85,8 +85,9 @@ function runs(lines: string[]): ReactNode[] {
   return out;
 }
 
-// [text](https://...), **bold** (may contain links), or a bare https:// link. Only http(s) links are made clickable.
-const TOKEN = /(\*\*[^*]+\*\*)|\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)|(https?:\/\/[^\s)<\]]+[^\s)<\].,;:!?])/g;
+// [text](https://...), **bold** (may contain links), *italic*, or a bare https:// link. Only http(s) links are made clickable.
+const TOKEN =
+  /(\*\*[^*]+\*\*)|\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)|(https?:\/\/[^\s)<\]]+[^\s)<\].,;:!?])|(?<![\w*])\*([^*\s][^*]*?)\*(?![\w*])/g;
 
 function inline(text: string): ReactNode[] {
   const out: ReactNode[] = [];
@@ -98,6 +99,7 @@ function inline(text: string): ReactNode[] {
     if (m[1]) out.push(<strong key={key}>{inline(m[1].slice(2, -2))}</strong>);
     else if (m[2] && m[3]) out.push(<a key={key} href={m[3]} target="_blank" rel="noreferrer">{m[2]}</a>);
     else if (m[4]) out.push(<a key={key} href={m[4]} target="_blank" rel="noreferrer">{shortUrl(m[4])}</a>);
+    else if (m[5]) out.push(<em key={key}>{inline(m[5])}</em>);
     last = at + m[0].length;
   }
   if (last < text.length) out.push(text.slice(last));

@@ -21,8 +21,8 @@ const SORTS: { key: SortKey; label: string }[] = [
 export function StopList({ pins, sort, onSort, selected, onSelect, onHover }: Props) {
   if (pins.length === 0) return null;
   return (
-    <section className="stop-list" aria-label="Next stops">
-      <div className="sorts" role="group" aria-label="Sort next stops">
+    <section className="stop-list" aria-label="Next jobs">
+      <div className="sorts" role="group" aria-label="Sort next jobs">
         {SORTS.map((s) => (
           <button key={s.key} type="button" aria-pressed={sort === s.key} onClick={() => onSort(s.key)}>
             {s.label}

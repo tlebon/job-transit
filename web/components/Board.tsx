@@ -16,7 +16,7 @@ type Props = {
   schooling: number | null;
   request: Profile;
   onPlan: (stop: Stop) => void;
-  children?: ReactNode; // shown under the header (the saved plan)
+  children?: ReactNode; // the saved plan: beside the map (above it in the compact board)
   mapOverlay?: ReactNode; // floats at the bottom of the full-size map (the ask bar)
   focus?: { census: number; at: number } | null; // ask the board to open a stop (e.g. from the guide)
   onSelectedChange?: (census: number | null) => void;
@@ -61,6 +61,8 @@ export function Board({ city, data, sort, onSort, error, schooling, request, onP
       side.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     }
   }, [selected]);
+  const planBeside = !compact && Boolean(children);
+  const [sideTab, setSideTab] = useState<"plan" | "jobs">("plan");
   const showMix = Boolean(origin && origin.mix.length > 1 && origin.kind !== "nearest station");
   const baseSchooling = schooling ?? yearsFor(start?.entry_education) ?? 4;
 
@@ -118,9 +120,19 @@ export function Board({ city, data, sort, onSort, error, schooling, request, onP
         )}
         {error && <p className="error">Couldn’t reach the planner: {error}. Check that the API is running.</p>}
       </div>
-      {children}
+      {compact && children}
 
-      <div className={compact ? "board-body" : selected !== null ? "board-body board-body-wide" : "board-body"}>
+      <div
+        className={
+          compact
+            ? "board-body"
+            : planBeside
+              ? "board-body board-body-wide board-body-plan"
+              : selected !== null
+                ? "board-body board-body-wide"
+                : "board-body"
+        }
+      >
         <div className={mapExpanded ? "map-slot map-expanded" : "map-slot"}>
         {compact && (
           <button type="button" className="map-toggle top-button" onClick={() => setMapExpanded(!mapExpanded)}>
@@ -163,10 +175,26 @@ export function Board({ city, data, sort, onSort, error, schooling, request, onP
               onClose={() => setSelected(null)}
               onPlan={() => onPlan(selectedStop)}
             />
-          ) : pins.length ? (
-            <StopList pins={pins} sort={sort} onSort={onSort} selected={selected} onSelect={setSelected} onHover={setHovered} />
           ) : (
-            <Legend />
+            <>
+              {planBeside && (
+                <div className="side-tabs" role="tablist" aria-label="Beside the map">
+                  <button type="button" role="tab" aria-selected={sideTab === "plan"} onClick={() => setSideTab("plan")}>
+                    Your plan
+                  </button>
+                  <button type="button" role="tab" aria-selected={sideTab === "jobs"} onClick={() => setSideTab("jobs")}>
+                    {pins.length ? "Nearby jobs" : "How to read the map"}
+                  </button>
+                </div>
+              )}
+              {planBeside && sideTab === "plan" ? (
+                children
+              ) : pins.length ? (
+                <StopList pins={pins} sort={sort} onSort={onSort} selected={selected} onSelect={setSelected} onHover={setHovered} />
+              ) : (
+                <Legend />
+              )}
+            </>
           )}
         </aside>
       </div>
@@ -210,8 +238,8 @@ function Legend() {
     <section className="legend" aria-label="How to read Job City">
       <h2>Job City</h2>
       <p>Every block is an occupation. Neighbours need similar skills, and districts group jobs that draw on the same kind of knowledge.</p>
-      <p>Tell us about your work and interests (Your profile, top right). Your best next stops appear as numbered pins, with routes from where you are.</p>
-      <p>Click any stop to see what the job is, why it suits you, your gap and how to get there. Then continue from there to plan a second step.</p>
+      <p>Tell us about your work and interests (Your profile, top right). Your best next jobs appear as numbered pins, with routes from where you are.</p>
+      <p>Click any pin to see what the job is, why it suits you, your gap and how to get there. Then continue from there to plan a second step.</p>
     </section>
   );
 }
