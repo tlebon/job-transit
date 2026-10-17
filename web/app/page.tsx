@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Board } from "@/components/Board";
 import { PlanCard } from "@/components/PlanCard";
 import { CvReader, type CvApply } from "@/components/CvReader";
@@ -9,6 +9,8 @@ import { Leg } from "@/components/Leg";
 import { GOALS, GoalPicker } from "@/components/GoalPicker";
 import { AskBar } from "@/components/AskBar";
 import { ChatPanel, type Turn } from "@/components/ChatPanel";
+import { AboutData } from "@/components/AboutData";
+import { loadLocation } from "@/lib/location";
 import { ChipGroups } from "@/components/ChipGroups";
 import { ExperiencePicker } from "@/components/ExperiencePicker";
 import { Logo } from "@/components/Logo";
@@ -67,6 +69,17 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [city, setCity] = useState<CityMap | null>(null);
   const [plan, setPlanState] = useState<Plan | null>(null);
+  const [planSavedAt, setPlanSavedAt] = useState<number | undefined>(undefined);
+  const [aboutOpen, setAboutOpen] = useState(false);
+  // their top next jobs: fetch openings in the background once per new list, so a first search is a lookup
+  const warmed = useRef("");
+  const warmOpenings = (codes: number[]) => {
+    const where = loadLocation();
+    const key = `${codes.join(",")}|${where.city}|${where.country}`;
+    if (!codes.length || key === warmed.current) return;
+    warmed.current = key;
+    api.warmOpenings(codes, where.city, where.country);
+  };
   useEffect(() => setPlanState(loadPlan()), []);
   const setPlan = (next: Plan | null) => {
     setPlanState(next);
@@ -110,6 +123,7 @@ export default function Home() {
         .then((d) => {
           setData(d);
           setError(null);
+          warmOpenings(d.results.slice(0, 5).map((r) => r.census));
         })
         .catch((e: Error) => {
           if (e.name !== "AbortError") setError(e.message);
@@ -205,6 +219,7 @@ export default function Home() {
   const onChatAction = (action: ChatAction) => {
     if (action.type === "save_plan") {
       setPlan(planFromAction(action, plan));
+      setPlanSavedAt(Date.now());
       return;
     }
     if (action.type === "suggest_replies") return; // shown in the chat itself
@@ -317,6 +332,9 @@ export default function Home() {
           </button>
           <button type="button" className="top-button" aria-expanded={drawerOpen} onClick={() => setDrawerOpen(!drawerOpen)}>
             {drawerOpen ? "Hide your profile" : "Your profile"}
+          </button>
+          <button type="button" className="linkish hide-narrow" onClick={() => setAboutOpen(true)}>
+            About the data
           </button>
           <button type="button" className="linkish" onClick={startOver}>
             Start over
@@ -519,18 +537,17 @@ export default function Home() {
         </div>
         )}
 
-        {chatMode && (
-          <ChatPanel
-            turns={turns}
-            setTurns={setTurns}
-            profile={profile}
-            selected={viewing}
-            onAction={onChatAction}
-            pendingQuestion={pendingQuestion}
-            onPendingSent={() => setPendingQuestion(null)}
-            plan={plan}
-          />
-        )}
+        <ChatPanel
+          hidden={!chatMode}
+          turns={turns}
+          setTurns={setTurns}
+          profile={profile}
+          selected={viewing}
+          onAction={onChatAction}
+          pendingQuestion={pendingQuestion}
+          onPendingSent={() => setPendingQuestion(null)}
+          plan={plan}
+        />
         <Board
           compact={chatMode}
           city={city}
@@ -544,6 +561,9 @@ export default function Home() {
           focus={focus}
           onSelectedChange={setViewing}
           mapOverlay={!onboarding ? <AskBar onAsk={askFromMap} /> : null}
+          planSavedAt={planSavedAt}
+          loading={loading}
+          onAbout={() => setAboutOpen(true)}
         >
           {plan && (
             <PlanCard
@@ -558,10 +578,12 @@ export default function Home() {
                 setChatMode(true);
               }}
               onOpenStop={(census) => setFocus({ census, at: Date.now() })}
+              savedAt={planSavedAt}
             />
           )}
         </Board>
       </main>
+      {aboutOpen && <AboutData onClose={() => setAboutOpen(false)} />}
     </>
   );
 }

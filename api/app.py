@@ -11,7 +11,7 @@ from api.chat import Guide
 from api.cv import read_cv
 from api.engine import Engine, Profile
 from api import mailer
-from api.openings import find_openings, start_collector
+from api.openings import find_openings, start_collector, warm
 
 app = FastAPI(title="Job Transit")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -177,6 +177,21 @@ class OpeningsIn(BaseModel):
     census: int
     city: str = Field(default="Berlin", max_length=80)
     country: Country = "de"
+
+
+class WarmIn(BaseModel):
+    census: list[int] = Field(max_length=8)
+    city: str = Field(default="Berlin", max_length=80)
+    country: Country = "de"
+
+
+@app.post("/openings/warm")
+def openings_warm(body: WarmIn, request: Request):
+    """Start fetching openings for someone's top next jobs in the background, so their first search is quick."""
+    if not mailer.allowed(f"warm:{client_ip(request)}", 30, 3600):   # each one costs Adzuna calls
+        return {"started": 0}
+    codes = [c for c in body.census if c in engine.position]
+    return {"started": warm(engine, codes, body.city.strip(), body.country)}
 
 
 @app.post("/openings")

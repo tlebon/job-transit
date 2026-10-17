@@ -193,7 +193,7 @@ export function StopPage({ stop, request, start, schooling, hasEducation, onPlan
           )}
           {stop.bls_ai_exposure && (
             <div>
-              <dt>AI exposure, BLS rating</dt>
+              <dt>AI exposure, US labor bureau (BLS)</dt>
               <dd>
                 {stop.bls_ai_exposure}
                 <span className="fact-sub">Theory plus real Claude and Copilot use</span>

@@ -153,7 +153,17 @@ export type StopDetails = {
   from_occupation?: Occupation;
 };
 
-export type Opening = { title: string; company: string; location: string; url: string; source: string; near: 0 | 1 | 2 };
+export type Opening = {
+  title: string;
+  company: string;
+  location: string;
+  url: string;
+  source: string;
+  near: 0 | 1 | 2;
+  us_only?: boolean; // remote, but only for people in the US or the Americas
+  language?: "German" | "English" | null; // the language the posting is written in
+  needs_german?: boolean; // asks for good German
+};
 export type Openings = {
   occupation: string;
   search_terms: string[];
@@ -184,6 +194,13 @@ export const api = {
       body: JSON.stringify({ profile, census }),
       signal,
     }),
+  /** Start fetching openings for these jobs in the background, so the first search for them is quick. */
+  warmOpenings: (census: number[], city: string, country: string) =>
+    getJson<{ started: number }>("/openings/warm", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ census, city, country }),
+    }).catch(() => ({ started: 0 })),
   openings: (census: number, city: string, country: string, signal?: AbortSignal) =>
     getJson<Openings>("/openings", {
       method: "POST",

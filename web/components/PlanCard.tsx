@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   addStep,
   downloadIcs,
@@ -21,20 +21,30 @@ type Props = {
   onOpenStop: (census: number) => void;
   onHelp: (step: PlanStep) => void; // ask the guide for resources and a first action
   onPractice: (step: PlanStep) => void; // a short quiz or exercise with the guide
+  savedAt?: number; // when the guide last saved the plan: scroll it into view and highlight it
 };
 
 const dateFormat = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short" });
 
 /** The saved plan: steps to tick off, edit or add to, with target dates and a calendar export for reminders. */
-export function PlanCard({ plan, onChange, onOpenStop, onHelp, onPractice }: Props) {
+export function PlanCard({ plan, onChange, onOpenStop, onHelp, onPractice, savedAt }: Props) {
   const [editing, setEditing] = useState<string | null>(null);
+  const card = useRef<HTMLDetailsElement>(null);
+  const [fresh, setFresh] = useState(false);
+  useEffect(() => {
+    if (!savedAt || Date.now() - savedAt > 3000) return; // only right after a save, not on every remount
+    card.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    setFresh(true);
+    const timer = setTimeout(() => setFresh(false), 2000);
+    return () => clearTimeout(timer);
+  }, [savedAt]);
   const [draft, setDraft] = useState("");
   const done = plan.steps.filter((s) => s.done).length;
   const total = plan.steps.length;
   const open = plan.steps.some((s) => !s.done);
 
   return (
-    <details className="plan" open>
+    <details className={fresh ? "plan plan-fresh" : "plan"} open ref={card}>
       <summary className="plan-head">
         <span className="plan-label">Your plan</span>
         <span className="plan-title">{plan.occupation}</span>

@@ -30,12 +30,13 @@ type Props = {
   selected: number | null;
   onAction: (action: ChatAction) => void;
   pendingQuestion?: string | null; // asked from the map's ask bar; sent once on arrival
+  hidden?: boolean; // map view: stays mounted so an answer in progress keeps streaming
   onPendingSent?: () => void;
   plan?: Plan | null; // sent along so the guide can discuss and revise it
 };
 
 /** The guide: a chat grounded in the planner's data, which can also open jobs and update the profile. */
-export function ChatPanel({ turns, setTurns, profile, selected, onAction, pendingQuestion, onPendingSent, plan }: Props) {
+export function ChatPanel({ turns, setTurns, profile, selected, onAction, pendingQuestion, onPendingSent, plan, hidden }: Props) {
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const controller = useRef<AbortController | null>(null);
@@ -112,6 +113,7 @@ export function ChatPanel({ turns, setTurns, profile, selected, onAction, pendin
     controller.current = new AbortController();
     let afterTool = false;
     let answered = false; // has any of the answer arrived (decides what Stop does)
+    let failed = false;
     try {
       await streamChat(
         { messages: history, profile, selected, location: loadLocation(), plan },
@@ -129,11 +131,13 @@ export function ChatPanel({ turns, setTurns, profile, selected, onAction, pendin
             if (action.type === "suggest_replies") update((last) => ({ ...last, suggestions: action.replies }));
             else onAction(action);
           } else if (event.type === "error") {
+            failed = true;
             fail(event.message);
           }
         },
         controller.current.signal,
       );
+      if (!answered && !failed) fail("The guide didn’t write an answer. Try again.");
     } catch (e) {
       if ((e as Error).name === "AbortError") stopped(question, answered);
       else fail("Couldn’t reach the guide. Check your connection or try again in a moment.");
@@ -147,7 +151,7 @@ export function ChatPanel({ turns, setTurns, profile, selected, onAction, pendin
   }
 
   return (
-    <section className="chat" aria-label="The guide">
+    <section className="chat" aria-label="The guide" hidden={hidden}>
       <header className="chat-head">
         <strong>The guide</strong>
         <span className="q-help">Answers come from the same data as the map, and it can open jobs on the map and update your profile.</span>

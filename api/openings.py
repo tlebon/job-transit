@@ -394,6 +394,38 @@ def _fetched_at(feeds: list[str]) -> dict[str, float | None]:
 # ---- background collection ---------------------------------------------------------------------
 _collector_started = False
 
+# Searchable sources are fetched per occupation, so the first search for a job used to come back thin (Adzuna
+# often takes longer than the search budget). The app warms them as soon as it knows someone's next jobs.
+WARM_LIMIT = 5   # occupations per request: the top of their list
+_warm_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="openings-warm")
+_warming: set[str] = set()
+_warming_lock = threading.Lock()
+
+
+def warm(engine, censuses: list[int], city: str, country: str) -> int:
+    """Fetch the searchable sources for these occupations in the background. Returns how many fetches started."""
+    feeds = [f for census in censuses[:WARM_LIMIT] for f in search_feeds(search_terms(engine, census), city, country)]
+    ages = _fetched_at([f[0] for f in feeds])
+    started = 0
+    for feed, source, fetch in feeds:
+        if ages.get(feed) and time.time() - ages[feed] < REFRESH_SECONDS:
+            continue   # fresh enough: a search will be a lookup
+        with _warming_lock:
+            if feed in _warming:
+                continue
+            _warming.add(feed)
+
+        def job(feed=feed, source=source, fetch=fetch):
+            try:
+                _refresh(engine, feed, source, fetch)
+            finally:
+                with _warming_lock:
+                    _warming.discard(feed)
+
+        _warm_pool.submit(job)
+        started += 1
+    return started
+
 
 def collect_once(engine):
     """Fetch every stale background feed (in parallel), then match and store them one by one."""
@@ -482,6 +514,42 @@ def _near(location: str, city: str) -> int:
     return 1 if "remote" in loc or "anywhere" in loc else 0
 
 
+# Remote postings that are really only for people in the US (or the Americas)
+US_IN_LOCATION = re.compile(r"\b(us|usa|u\.s\.?|united states|north america|americas|canada)\b", re.I)
+EUROPE_IN_LOCATION = re.compile(r"\b(europe|emea|eu|germany|deutschland|uk|worldwide|global|anywhere)\b", re.I)
+US_IN_TEXT = re.compile(
+    r"(must|need to|required to|should) (be )?(based|located|living|reside) in the (us|u\.s\.|usa|united states)"
+    r"|(us|u\.s\.)[- ]based (candidates|applicants|only)|authori[sz]ed to work in the (us|u\.s\.|united states)"
+    r"|\b(us|u\.s\.|north american?) time ?zones?|\b(est|pst|cst|edt|pdt)\b[^.]{0,40}(hours|overlap|time ?zone)",
+    re.I,
+)
+
+
+def us_only(location: str, text: str) -> bool:
+    loc = location or ""
+    if US_IN_LOCATION.search(loc) and not EUROPE_IN_LOCATION.search(loc):
+        return True
+    return bool(US_IN_TEXT.search(text or ""))
+
+
+GERMAN_WORDS = set("und der die das mit für wir sie ist ein eine zu von auf bei oder als ihre unser deine du".split())
+ENGLISH_WORDS = set("and the with for we you is a to of on at or as your our are will be".split())
+NEEDS_GERMAN = re.compile(
+    r"(deutsch|german)\w*\W{1,30}(c1|c2|b2|fließend|fliessend|fluent|verhandlungssicher|native|muttersprach|required|erforderlich)"
+    r"|(fließend|fliessend|sehr gut|verhandlungssicher|fluent)\w*\W{1,20}(deutsch|german)|deutschkenntnisse",
+    re.I,
+)
+
+
+def posting_language(title: str, text: str) -> str | None:
+    """'German' or 'English' from common words; None when there isn't enough text to tell."""
+    words = re.findall(r"[a-zäöüß]+", f"{title} {text or ''}".lower())[:400]
+    de, en = sum(w in GERMAN_WORDS for w in words), sum(w in ENGLISH_WORDS for w in words)
+    if de + en < 5:
+        return None
+    return "German" if de > en else "English"
+
+
 def _ago(ts: float | None) -> str | None:
     return datetime.fromtimestamp(ts, timezone.utc).isoformat() if ts else None
 
@@ -512,7 +580,7 @@ def find_openings(
     marks = ",".join("?" * len(feeds))
     with closing(_connect()) as con:
         rows = con.execute(
-            f"SELECT source, title, company, location, url, fetched_at FROM postings "
+            f"SELECT source, title, company, location, url, fetched_at, description FROM postings "
             f"WHERE census = ? AND score >= ? AND feed IN ({marks}) ORDER BY fetched_at DESC",
             [census, MIN_MATCH_SCORE, *feeds],
         ).fetchall()
@@ -526,11 +594,13 @@ def find_openings(
         key=lambda r: rank.get(r[0], 9)
     )  # the same posting on two boards: keep the first source's copy
     keep, seen = [], set()
-    for source, title, company, location, url, fetched_at in rows:
+    for source, title, company, location, url, fetched_at, description in rows:
         key = (title.lower(), (company or "").lower())
         if key in seen:
             continue
         seen.add(key)
+        near = _near(location, city)
+        us = near < 2 and us_only(location, description)
         keep.append(
             {
                 "title": title,
@@ -538,7 +608,10 @@ def find_openings(
                 "location": location,
                 "url": url,
                 "source": source,
-                "near": _near(location, city),
+                "near": 0 if us else near,   # remote but US-only isn't remote for someone in Europe
+                "us_only": us,
+                "language": posting_language(title, description),
+                "needs_german": bool(NEEDS_GERMAN.search(f"{title} {description or ''}")),
             }
         )
     keep.sort(

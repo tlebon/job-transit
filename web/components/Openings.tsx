@@ -39,6 +39,20 @@ export function Openings({ census }: { census: number }) {
   }
 
   const unavailable = result ? Object.entries(result.sources).filter(([, v]) => typeof v === "string") : [];
+  const collecting = unavailable.filter(([, why]) => String(why).includes("still collecting")).map(([name]) => name);
+
+  // A source still collecting (its first search for this job ran past the time limit): look again once, shortly.
+  const rechecked = useRef(false);
+  useEffect(() => {
+    rechecked.current = false;
+  }, [census]);
+  useEffect(() => {
+    if (!collecting.length || rechecked.current) return;
+    rechecked.current = true;
+    const timer = setTimeout(search, 20000);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [result]);
 
   return (
     <section className="openings">
@@ -99,10 +113,19 @@ export function Openings({ census }: { census: number }) {
                     {o.location}
                   </span>
                   <span className="opening-meta">
-                    {NEAR[o.near]}
+                    {o.us_only ? "Remote, US only" : NEAR[o.near]}
                     <span className="sep" aria-hidden>·</span>
                     via {o.source}
                   </span>
+                  {(o.needs_german || o.language === "German") && (
+                    <span className="opening-flags">
+                      {o.needs_german ? (
+                        <span className="badge">Asks for good German</span>
+                      ) : (
+                        <span className="badge">Written in German</span>
+                      )}
+                    </span>
+                  )}
                 </li>
               ))}
             </ul>
@@ -114,6 +137,9 @@ export function Openings({ census }: { census: number }) {
                 .map(([name, at]) => `${name} ${ago(at)}`)
                 .join(" · ")}
             </p>
+          )}
+          {collecting.length > 0 && !rechecked.current && (
+            <p className="q-help">Still collecting from {collecting.join(" and ")}. Checking again in a moment…</p>
           )}
           {unavailable.length > 0 && (
             <p className="q-help">Not searched: {unavailable.map(([name, why]) => `${name} (${String(why).replace(/^unavailable: /, "")})`).join("; ")}.</p>

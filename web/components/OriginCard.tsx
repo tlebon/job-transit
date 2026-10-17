@@ -69,7 +69,7 @@ export function OriginCard({ origin, request, stops, onSelect, onClose }: Props)
           )}
           {origin.bls_ai_exposure && (
             <div>
-              <dt>AI exposure, BLS rating</dt>
+              <dt>AI exposure, US labor bureau (BLS)</dt>
               <dd>
                 {origin.bls_ai_exposure}
                 <span className="fact-sub">Theory plus real Claude and Copilot use</span>

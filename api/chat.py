@@ -40,8 +40,11 @@ they tell you something new about themselves (goals, hobbies, experience, a seco
 consultant) only exist inside broad census groups; pay and growth are US figures.
 - find_openings searches live job boards (Adzuna, 80,000 Hours, Arbeitnow, AI company boards) for one occupation. \
 Show a few concrete postings with their links. For counts, use by_place (in their city / remote / elsewhere), not \
-total_matched alone. If a source wasn't searched, pass on its reason (for example "still loading after a restart, try \
-again in a few minutes"). Use the person's city unless they ask about another place.
+total_matched alone. If a source wasn't searched, pass on its reason. A source "still collecting" is fetching this \
+job's postings right now: say the results are incomplete (especially when few are in their city), that a second \
+search in a minute will include it, and offer "Check the openings again" as a suggested reply. Use the person's city unless they ask about another place. Each opening says the \
+language it is written in and whether it asks for good German (needs_german): say so next to it, since people \
+moving to Germany often don't speak it yet. Leave out us_only postings unless they live in the Americas.
 - A job marked your_title is one of the person's own job titles, not a move.
 - Before the first plan for a move, if you don't know it yet, ask how much time they can give it (hours a week) and \
 when they would like to have switched; offer typical answers as suggestions ("A few hours a week", "Evenings and \
@@ -88,6 +91,9 @@ what they enjoy), make one suggestion a quick way to tell you ("I care most abou
 - Occupations are identified by census codes; get them from search_jobs or recommend, never guess them.
 - When they ask about a specific posting, read it with read_posting before judging the fit, and point to the \
 parts of the posting that match or don't match their profile.
+- The person only sees your replies, never tool results. Anything you refer to (a posting, a course, a number) must \
+be in a reply they have seen: name a posting with its company and a Markdown link the first time. Suggested replies \
+may only mention things your replies have already shown.
 
 The person's current situation:
 {context}"""
@@ -406,11 +412,13 @@ class Guide:
         try:
             system = SYSTEM.format(context=self.context(profile, selected, location, plan))
             convo = [{"role": m["role"], "content": m["content"]} for m in messages if m.get("content")]
+            wrote = False   # has text arrived since the last round of real tools? An answer can't end without it.
             for _ in range(MAX_TOOL_ROUNDS):
                 with self.client.messages.stream(model=CHAT_MODEL, max_tokens=2500, system=system,
                                                  tools=tools_for(location), messages=convo) as stream:
                     for ev in stream:
                         if ev.type == "text":
+                            wrote = wrote or bool(ev.text.strip())
                             yield event({"type": "text", "text": ev.text})
                         elif (ev.type == "content_block_start"
                               and getattr(ev.content_block, "type", None) == "server_tool_use"):
@@ -423,10 +431,18 @@ class Guide:
                 if final.stop_reason != "tool_use":
                     break
                 results, called = [], set()
+                names = {block.name for block in final.content if block.type == "tool_use"}
+                # Suggestions with no answer written yet: send them back instead of showing chips under nothing
+                early = names == {"suggest_replies"} and not wrote
                 for block in final.content:
                     if block.type != "tool_use":
                         continue
                     called.add(block.name)
+                    if early:
+                        results.append({"type": "tool_result", "tool_use_id": block.id, "is_error": True,
+                                        "content": "Not shown: you haven't written a reply yet. Write your answer to "
+                                                   "the person first, then call suggest_replies."})
+                        continue
                     if block.name != "suggest_replies":   # suggestions are silent: no status line
                         label = TOOL_LABELS.get(block.name, lambda a: block.name)(block.input or {})
                         yield event({"type": "tool", "label": label})
@@ -441,8 +457,10 @@ class Guide:
                     results.append({"type": "tool_result", "tool_use_id": block.id, "content": _json(result)})
                 # A round that only suggests replies ends the answer. Anything else (even an app action like
                 # save_plan) gets its result back, so Claude can tell the person what it did.
-                if called == {"suggest_replies"}:
+                if called == {"suggest_replies"} and not early:
                     break
+                if called - {"suggest_replies"}:
+                    wrote = False   # real tools ran: their results still need words
                 convo.append({"role": "user", "content": results})
             yield event({"type": "done"})
         except anthropic.AuthenticationError:

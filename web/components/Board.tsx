@@ -18,6 +18,9 @@ type Props = {
   onPlan: (stop: Stop) => void;
   children?: ReactNode; // the saved plan: beside the map (above it in the compact board)
   mapOverlay?: ReactNode; // floats at the bottom of the full-size map (the ask bar)
+  planSavedAt?: number; // the guide just saved a plan: show the plan tab
+  loading?: boolean; // next jobs are being re-ranked
+  onAbout?: () => void; // open "About the data"
   focus?: { census: number; at: number } | null; // ask the board to open a stop (e.g. from the guide)
   onSelectedChange?: (census: number | null) => void;
   compact?: boolean; // beside the chat: small map on top (expandable), stop pages below
@@ -25,7 +28,7 @@ type Props = {
 
 const PIN_COUNT = 10;
 
-export function Board({ city, data, sort, onSort, error, schooling, request, onPlan, focus, onSelectedChange, compact, children, mapOverlay }: Props) {
+export function Board({ city, data, sort, onSort, error, schooling, request, onPlan, focus, onSelectedChange, compact, children, mapOverlay, planSavedAt, loading, onAbout }: Props) {
   const [selected, setSelected] = useState<number | null>(null);
   const [mapExpanded, setMapExpanded] = useState(false);
   useEffect(() => {
@@ -63,6 +66,9 @@ export function Board({ city, data, sort, onSort, error, schooling, request, onP
   }, [selected]);
   const planBeside = !compact && Boolean(children);
   const [sideTab, setSideTab] = useState<"plan" | "jobs">("plan");
+  useEffect(() => {
+    if (planSavedAt) setSideTab("plan");
+  }, [planSavedAt]);
   const showMix = Boolean(origin && origin.mix.length > 1 && origin.kind !== "nearest station");
   const baseSchooling = schooling ?? yearsFor(start?.entry_education) ?? 4;
 
@@ -152,7 +158,14 @@ export function Board({ city, data, sort, onSort, error, schooling, request, onP
             onSelectStart={() => currentCode !== null && setSelected(currentCode)}
           />
         ) : (
-          <div className="city city-loading">Loading the map…</div>
+          <div className="city city-loading" role="status">
+            <span className="sr-only">Loading the map…</span>
+          </div>
+        )}
+        {city && loading && (
+          <p className="map-updating" role="status">
+            Finding your next jobs…
+          </p>
         )}
         {!compact && mapOverlay}
         </div>
@@ -200,7 +213,12 @@ export function Board({ city, data, sort, onSort, error, schooling, request, onP
       </div>
       <p className="footnote">
         Nearby means similar skills. Common, occasional and rare moves come from real US job changes in the Current
-        Population Survey, 2015–2021.
+        Population Survey, 2015–2021.{" "}
+        {onAbout && (
+          <button type="button" className="linkish" onClick={onAbout}>
+            About the data
+          </button>
+        )}
       </p>
     </section>
   );
