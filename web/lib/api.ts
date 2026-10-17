@@ -151,6 +151,7 @@ export type Openings = {
   updated?: Record<string, string>; // ISO time each source's postings were fetched
   openings: Opening[];
   total_matched: number;
+  by_place?: { in_city: number; remote: number; elsewhere: number };
 };
 
 export const api = {

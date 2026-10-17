@@ -79,7 +79,10 @@ export function Openings({ census }: { census: number }) {
           <p className="q-help">
             {result.total_matched === 0
               ? "No current postings matched this job."
-              : `${result.total_matched} posting${result.total_matched === 1 ? "" : "s"} matched`}
+              : `${result.total_matched} posting${result.total_matched === 1 ? "" : "s"} matched` +
+                (result.by_place
+                  ? ` (${result.by_place.in_city} in ${result.city || "your city"}, ${result.by_place.remote} remote, ${result.by_place.elsewhere} elsewhere)`
+                  : "")}
             {result.total_matched > result.openings.length ? `, showing ${result.openings.length}` : ""}. Searched for{" "}
             {result.search_terms.map((t) => `“${t}”`).join(", ")}.
           </p>

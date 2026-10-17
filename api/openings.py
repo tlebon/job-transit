@@ -360,4 +360,6 @@ def find_openings(engine, census: int, city: str = "Berlin", country: str = "de"
         else:
             status[source] = "unavailable: still collecting, try again in a few minutes"
     return {"occupation": engine.census.at[census, "title"], "search_terms": terms, "city": city, "country": country,
-            "sources": status, "updated": updated, "openings": keep[:limit], "total_matched": len(keep)}
+            "sources": status, "updated": updated, "openings": keep[:limit], "total_matched": len(keep),
+            "by_place": {"in_city": sum(p["near"] == 2 for p in keep), "remote": sum(p["near"] == 1 for p in keep),
+                         "elsewhere": sum(p["near"] == 0 for p in keep)}}

@@ -39,8 +39,10 @@ they tell you something new about themselves (goals, hobbies, experience, a seco
 - Be honest about limits: the data places people by the kind of work, not seniority; some jobs (product designer, \
 consultant) only exist inside broad census groups; pay and growth are US figures.
 - find_openings searches live job boards (Adzuna, 80,000 Hours, Arbeitnow, AI company boards) for one occupation. \
-Show a few concrete postings with their links; say which sources were unavailable. Use the person's city unless they \
-ask about another place.
+Show a few concrete postings with their links. For counts, use by_place (in their city / remote / elsewhere), not \
+total_matched alone. If a source wasn't searched, pass on its reason (for example "still loading after a restart, try \
+again in a few minutes"). Use the person's city unless they ask about another place.
+- A stop marked your_title is one of the person's own job titles, not a move.
 - When they ask for a plan for a move: call stop_details for that stop first, then save_plan with 3 to 6 steps. \
 Steps must be concrete and specific to this person and this job: name the actual skills from the gaps and tasks, \
 what to build or learn and how to show it, who to talk to, and when to start applying. Give each step a realistic \
@@ -159,6 +161,10 @@ def _json(obj) -> str:
     return json.dumps(obj, default=lambda o: o.item() if hasattr(o, "item") else str(o))
 
 
+OWN_TITLE_NOTE = ("This is one of the person's own job titles, not a move, so there is no move frequency or skill "
+                  "match for it. Say so plainly rather than calling the figures missing.")
+
+
 def _job_summary(row: dict) -> dict:
     keep = ["census", "title", "reach_label", "median_wage", "growth_pct", "bls_ai_exposure", "ai_theoretical",
             "entry_education", "work_experience", "skill_match", "appeal_pct", "family"]
@@ -218,10 +224,13 @@ class Guide:
             changes = {k: args[k] for k in ("job", "goals", "hobbies", "experience_years") if k in args}
             if "job" in changes and changes["job"] not in e.position:
                 return {"error": "unknown census code; use search_jobs"}, None
-            rec = e.recommend(replace(profile, **changes), sort=args.get("sort", "best"), limit=args.get("limit", 8))
+            asked = replace(profile, **changes)
+            rec = e.recommend(asked, sort=args.get("sort", "best"), limit=args.get("limit", 8))
             origin = rec.get("origin") or {}
+            own = {asked.job, *asked.extra_jobs}
             return {"starting_from": origin.get("title"), "mix": origin.get("mix"),
-                    "stops": [_job_summary(r) for r in rec["results"]]}, None
+                    "stops": [_job_summary(r) | ({"your_title": True} if r["census"] in own else {})
+                              for r in rec["results"]]}, None
         if name == "stop_details":
             code = args.get("census")
             if code not in e.position:
@@ -232,7 +241,8 @@ class Guide:
                     "includes": d.get("example_titles") if d.get("catch_all") else None,
                     "move": d.get("reach"), "skill_gaps": d.get("gaps"), "transfers": d.get("transfers"),
                     "pay_change_pct": d.get("pay_change_pct"), "experience_note": d.get("experience_note"),
-                    "on_the_job_training": occ.get("on_the_job_training")}, None
+                    "on_the_job_training": occ.get("on_the_job_training"),
+                    "note": OWN_TITLE_NOTE if code in {profile.job, *profile.extra_jobs} else None}, None
         if name == "find_openings":
             code = args.get("census")
             if code not in e.position:
@@ -240,7 +250,7 @@ class Guide:
             where = location or {"city": "Berlin", "country": "de"}
             found = find_openings(e, code, args.get("city") or where["city"], args.get("country") or where["country"], limit=10)
             for p in found["openings"]:
-                p.pop("near", None)
+                p["where"] = ["elsewhere", "remote", "in their city"][p.pop("near")]
             return found, None
         if name == "save_plan":
             code = args.get("census")
