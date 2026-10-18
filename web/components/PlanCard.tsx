@@ -14,7 +14,9 @@ import {
   type PlanStep,
   type SavedOpening,
 } from "@/lib/plan";
-import { planName, removeLink, setOpeningStatus } from "@/lib/workspace";
+import { editDocument, planName, removeDocument, removeLink, setOpeningStatus } from "@/lib/workspace";
+import { logLabel } from "@/lib/feedback";
+import { DocumentViewer, KIND_LABEL } from "./DocumentViewer";
 import { EmailPlan } from "./EmailPlan";
 import { Markdown } from "./Markdown";
 
@@ -51,9 +53,11 @@ export function PlanCard({ plan, onChange, onOpenStop, onHelp, onPractice, saved
   return (
     <details className={fresh ? "plan plan-fresh" : "plan"} open ref={card}>
       <summary className="plan-head">
-        <span className="plan-label">Your plan{plan.name && plan.name !== plan.occupation ? `: ${planName(plan)}` : ""}</span>
-        <span className="plan-title">{plan.occupation}</span>
-        <span className="plan-progress">
+        <span className="plan-title">{planName(plan)}</span>
+        <span className="plan-sub">
+          {!plan.occupation.toLowerCase().startsWith(planName(plan).toLowerCase()) && (
+            <span title="Pay, growth and skills for this path come from this occupation">In the job data: {plan.occupation}{" · "}</span>
+          )}
           {done} of {total} done
         </span>
       </summary>
@@ -132,7 +136,15 @@ export function PlanCard({ plan, onChange, onOpenStop, onHelp, onPractice, saved
           Add
         </button>
       </form>
-      <PlanOpenings plan={plan} onStatus={(url, status) => onChange(setOpeningStatus(plan, url, status))} />
+      <PlanOpenings
+        plan={plan}
+        onStatus={(url, status) => {
+          const before = plan.openings?.find((o) => o.url === url);
+          if (before && before.status !== status) logLabel(plan, before, status, "plan", before.status);
+          onChange(setOpeningStatus(plan, url, status));
+        }}
+      />
+      <PlanDocuments plan={plan} onChange={onChange} />
       <PlanLinks plan={plan} onRemove={(url) => onChange(removeLink(plan, url))} />
       <div className="plan-actions">
         <EmailPlan plan={emailPlan ?? plan} />
@@ -375,6 +387,52 @@ function PlanLinks({ plan, onRemove }: { plan: Plan; onRemove: (url: string) => 
           </li>
         ))}
       </ul>
+    </details>
+  );
+}
+
+/** What the guide wrote for this move (cover letters, a tailored CV, messages, notes), newest first. */
+function PlanDocuments({ plan, onChange }: { plan: Plan; onChange: (plan: Plan) => void }) {
+  const [openId, setOpenId] = useState<string | null>(null);
+  const docs = plan.documents ?? [];
+  const open = docs.find((d) => d.id === openId);
+  const openingTitle = (url?: string | null) => {
+    const o = url ? plan.openings?.find((x) => x.url === url) : undefined;
+    return o ? `${o.title}${o.company ? ` at ${o.company}` : ""}` : undefined;
+  };
+  if (!docs.length) return null;
+  return (
+    <details className="plan-openings plan-links plan-docs" open>
+      <summary>
+        <h4>Documents ({docs.length})</h4>
+      </summary>
+      <ul>
+        {docs.map((d) => (
+          <li key={d.id}>
+            <span className="plan-opening-text">
+              <button type="button" className="linkish opening-title doc-open" onClick={() => setOpenId(d.id)}>
+                {d.title}
+              </button>
+              <span className="opening-meta">
+                {KIND_LABEL[d.kind]}
+                {openingTitle(d.opening_url) ? ` · for ${openingTitle(d.opening_url)}` : ""}
+              </span>
+            </span>
+          </li>
+        ))}
+      </ul>
+      {open && (
+        <DocumentViewer
+          doc={open}
+          openingTitle={openingTitle(open.opening_url)}
+          onSave={(patch) => onChange(editDocument(plan, open.id, patch))}
+          onRemove={() => {
+            onChange(removeDocument(plan, open.id));
+            setOpenId(null);
+          }}
+          onClose={() => setOpenId(null)}
+        />
+      )}
     </details>
   );
 }

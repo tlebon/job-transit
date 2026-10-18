@@ -11,7 +11,7 @@ export function PlanTabs({ plans, active, busy, onSelect }: Props) {
   const tab = (id: string, label: string, sub?: string) => (
     <button key={id} type="button" role="tab" aria-selected={active === id} className="plan-tab" title={label} onClick={() => onSelect(id)}>
       <span className="plan-tab-name">
-        {label}
+        <span className="plan-tab-label">{label}</span>
         {busy[id] && <span className="plan-tab-busy" aria-label="answering" />}
       </span>
       {sub && <span className="plan-tab-sub">{sub}</span>}

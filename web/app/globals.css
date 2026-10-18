@@ -491,11 +491,11 @@ button, input, select, textarea { font: inherit; color: inherit; }
 
 /* the saved plan (Plan this move) */
 .plan { border: 1px solid var(--rule); border-radius: var(--radius-m); background: var(--paper); padding: 10px 14px; margin: 0 0 14px; }
-.plan-head { display: grid; grid-template-columns: 1fr auto; gap: 0 12px; cursor: pointer; list-style: none; }
+.plan-head { display: flex; flex-direction: column; gap: 2px; cursor: pointer; list-style: none; }
 .plan-head::-webkit-details-marker { display: none; }
 .plan-label { grid-column: 1; color: var(--ink-2); font-size: 13px; }
-.plan-title { grid-column: 1; font-weight: 800; font-size: 17px; }
-.plan-progress { grid-column: 2; grid-row: 1 / span 2; align-self: center; color: var(--ink-2); font-size: 14px; white-space: nowrap; }
+.plan-title { font-weight: 800; font-size: 19px; line-height: 1.2; }
+.plan-sub { color: var(--ink-2); font-size: 13px; }
 .plan-summary { margin: 8px 0 4px; color: var(--ink-2); font-size: 14px; }
 .plan-steps { list-style: none; margin: 6px 0 0; padding: 0; }
 .plan-steps > li { border-top: 1px solid var(--rule-soft); }
@@ -625,3 +625,17 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .plan-links summary h4 { display: inline; }
 .plan-links summary h4::after { content: " ▾"; }
 .plan-links:not([open]) summary h4::after { content: " ▸"; }
+
+/* a path's documents */
+.doc-open { text-align: left; font-weight: 700; text-decoration: none; padding: 0; }
+.doc-open:hover { text-decoration: underline; }
+.doc-viewer { width: min(760px, calc(100vw - 32px)); }
+.doc-text { max-height: 58vh; overflow: auto; border: 1px solid var(--rule); border-radius: 8px; padding: 14px 16px; background: var(--paper, transparent); }
+.doc-editor { min-height: 46vh; width: 100%; font: inherit; line-height: 1.5; resize: vertical; }
+.doc-title-field { font-size: 20px; font-weight: 700; }
+.doc-actions { flex-wrap: wrap; gap: 10px; }
+.doc-actions-left { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.doc-text ul, .doc-text ol { padding-left: 1.3em; }
+.doc-text ul { list-style: disc; }
+.doc-text ol { list-style: decimal; }
+.plan-tab-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }

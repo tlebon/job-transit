@@ -1,5 +1,6 @@
 "use client";
 
+import { logLabel } from "@/lib/feedback";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Board } from "@/components/Board";
 import { PlanCard } from "@/components/PlanCard";
@@ -36,6 +37,7 @@ import {
   EMPTY as EMPTY_WORKSPACE,
   EXPLORE,
   collectLinks,
+  saveDocument,
   loadWorkspace,
   MAX_PLANS,
   newId,
@@ -281,6 +283,13 @@ export default function Home() {
       return;
     }
     if (action.type === "suggest_replies") return; // shown in the chat itself
+    if (action.type === "save_document") {
+      updateWs((w) => {
+        const target = planFor(w, chatId);
+        return target ? { ...w, plans: w.plans.map((p) => (p.id === target.id ? saveDocument(p, action) : p)) } : w;
+      });
+      return;
+    }
     if (action.type === "log_practice" || action.type === "update_step") {
       updateWs((w) => {
         const target = planFor(w, chatId, (p) => !!findStep(p, action.title));
@@ -293,6 +302,12 @@ export default function Home() {
       return;
     }
     if (action.type === "openings_found") {
+      const shownIn = wsRef.current.plans.find((p) => p.census === action.census);
+      if (shownIn) {
+        const known = new Set((shownIn.openings ?? []).map((o) => o.url));
+        const fresh = [...new Map(action.openings.map((o) => [o.url, o])).values()].filter((o) => !known.has(o.url));
+        for (const o of fresh) logLabel(shownIn, o, "found", action.via ?? "guide");
+      }
       updateWs((w) => {
         const target = w.plans.find((p) => p.census === action.census);
         return target ? { ...w, plans: w.plans.map((p) => (p.id === target.id ? addFound(p, action.openings) : p)) } : w;
@@ -300,6 +315,9 @@ export default function Home() {
       return;
     }
     if (action.type === "track_application") {
+      const tracked = planFor(wsRef.current, chatId, (p: Plan) => (p.openings ?? []).some((o) => o.url === action.url));
+      const before = tracked?.openings?.find((o) => o.url === action.url);
+      if (tracked && before && before.status !== action.status) logLabel(tracked, before, action.status, "guide", before.status);
       updateWs((w) => {
         const matches = (p: Plan) => (p.openings ?? []).some((o) => o.url === action.url);
         const target = planFor(w, chatId, matches);
@@ -731,7 +749,7 @@ export default function Home() {
           planSavedAt={planSavedAt}
           loading={loading}
           onAbout={() => setAboutOpen(true)}
-          onOpeningsFound={(census, openings) => onChatAction({ type: "openings_found", census, openings }, EXPLORE)}
+          onOpeningsFound={(census, openings) => onChatAction({ type: "openings_found", census, openings, via: "job_page" }, EXPLORE)}
         >
           {!plan && ws.plans.length > 0 && (
             <PlansList

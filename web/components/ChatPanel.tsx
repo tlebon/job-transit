@@ -21,8 +21,10 @@ export type Turn = ChatMessage & {
 function planStarters(plan: Plan) {
   const next = plan.steps.find((s) => !s.done);
   const learning = plan.steps.find((s) => s.sessions && !s.done);
+  const saved = plan.openings?.find((o) => o.status === "interested");
   return [
     next && `Help me start: ${next.title}`,
+    saved && `Write a cover letter for ${saved.title}${saved.company ? ` at ${saved.company}` : ""}`,
     "Find openings for this move",
     learning && learning !== next && `Quiz me on: ${learning.title}`,
     "What could make this move harder than it looks?",

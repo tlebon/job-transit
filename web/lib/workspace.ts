@@ -1,7 +1,7 @@
 // The workspace: several plans (one per move the person is weighing), each with its own conversation, plus an
 // Explore conversation for everything that isn't about one plan yet. Kept in this browser.
 import type { ChatMessage } from "./api";
-import { loadPlan, type ApplicationStatus, type Plan, type PlanLink, type SavedOpening } from "./plan";
+import { loadPlan, type ApplicationStatus, type DocumentKind, type Plan, type PlanDocument, type PlanLink, type SavedOpening } from "./plan";
 
 export const EXPLORE = "explore";
 export type StoredTurn = ChatMessage & { failed?: boolean; error?: string; suggestions?: string[] };
@@ -113,6 +113,15 @@ const shortDate = (iso: string) => {
   return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 };
 
+/** "Your path to AI safety", and the job it's filed under in the data when that's a different name. */
+function pathLine(plan: Plan): string {
+  const name = planName(plan);
+  const same = name.trim().toLowerCase() === plan.occupation.trim().toLowerCase() || plan.occupation.toLowerCase().startsWith(name.toLowerCase());
+  return same
+    ? `This is your path to **${plan.occupation}**.`
+    : `This is your path to **${name}**. In the job data it falls under *${plan.occupation}*, which is where its pay, growth and skills come from.`;
+}
+
 /** The first message in a new path's conversation: what the plan is, step by step, so the talk starts from it. */
 export function planIntro(plan: Plan): string {
   const steps = plan.steps
@@ -122,7 +131,7 @@ export function planIntro(plan: Plan): string {
     })
     .join("\n");
   return [
-    `This is your path to **${plan.occupation}**.`,
+    pathLine(plan),
     (plan.summary ?? "").trim(),
     steps ? `The plan:\n\n${steps}` : "",
     "This conversation is just about this move. Ask me for help with a step, a practice session, openings, or changes to the plan.",
@@ -247,4 +256,26 @@ export const removeLink = (plan: Plan, url: string): Plan => ({
   ...plan,
   links: (plan.links ?? []).filter((l) => l.url !== url),
   hiddenLinks: [...(plan.hiddenLinks ?? []).filter((u) => u !== url), url].slice(-200),
+});
+
+// Documents: the guide saves them with save_document; the same title replaces (a revision), so the person's
+// edits are overwritten only when they ask the guide to revise.
+export const MAX_DOCUMENTS = 8;
+export function saveDocument(
+  plan: Plan,
+  doc: { title: string; kind: DocumentKind; content: string; opening_url?: string | null },
+): Plan {
+  const docs = plan.documents ?? [];
+  const same = docs.find((d) => d.title.trim().toLowerCase() === doc.title.trim().toLowerCase());
+  const saved: PlanDocument = { ...doc, id: same?.id ?? newId(), updated: today(), edited: false };
+  const rest = docs.filter((d) => d !== same);
+  return { ...plan, documents: [saved, ...rest].slice(0, MAX_DOCUMENTS) };
+}
+export const editDocument = (plan: Plan, id: string, patch: Partial<Pick<PlanDocument, "title" | "content">>): Plan => ({
+  ...plan,
+  documents: (plan.documents ?? []).map((d) => (d.id === id ? { ...d, ...patch, updated: today(), edited: true } : d)),
+});
+export const removeDocument = (plan: Plan, id: string): Plan => ({
+  ...plan,
+  documents: (plan.documents ?? []).filter((d) => d.id !== id),
 });

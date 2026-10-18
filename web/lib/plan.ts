@@ -29,6 +29,17 @@ export type SavedOpening = {
 };
 // A link the guide gave in this path's conversation or a step's resources, kept so it's easy to find again.
 export type PlanLink = { url: string; title: string; added: string };
+// Something the guide wrote for this move (or the person edited): a cover letter, tailored CV, message, notes.
+export type DocumentKind = "cover_letter" | "cv" | "outreach" | "notes";
+export type PlanDocument = {
+  id: string;
+  title: string;
+  kind: DocumentKind;
+  content: string; // Markdown
+  opening_url?: string | null; // the opening it's for, if any
+  updated: string; // YYYY-MM-DD
+  edited?: boolean; // the person changed it since the guide saved it
+};
 export type Plan = {
   id?: string; // set once there can be several plans (workspace.ts)
   name?: string; // short tab name ("Carpentry"); the occupation title when the guide gave none
@@ -40,6 +51,7 @@ export type Plan = {
   openings?: SavedOpening[];
   links?: PlanLink[];
   hiddenLinks?: string[]; // removed by the person: not collected again
+  documents?: PlanDocument[];
 };
 export type PlanAction = {
   type: "save_plan";
@@ -132,6 +144,9 @@ export function planFromAction(action: PlanAction, previous: Plan | null): Plan 
     id: sameMove?.id,
     name: action.name || sameMove?.name,
     openings: sameMove?.openings,
+    links: sameMove?.links,
+    hiddenLinks: sameMove?.hiddenLinks,
+    documents: sameMove?.documents,
     census: action.census,
     occupation: action.occupation,
     summary: action.summary,

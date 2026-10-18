@@ -25,6 +25,10 @@ CHAT_MODEL = os.getenv("CHAT_MODEL", "claude-sonnet-5-5")
 MAX_TOOL_ROUNDS = 6
 GOALS = ["pay", "stability", "less_ai", "passion"]
 MAX_PATHS = 5   # web/lib/workspace.ts MAX_PLANS
+DOC_KINDS = ["cover_letter", "cv", "outreach", "notes"]
+MAX_DOCS = 8            # per path
+MAX_DOC_CHARS = 15000   # one document
+DOCS_IN_CONTEXT = 12000 # all of a path's documents together, in what the guide gets each turn
 TRACK_STATUSES = ["interested", "applied", "interview", "offer", "no", 'hidden']   # web/lib/plan.ts ApplicationStatus, minus found, hidden refers to jobs the user isnt interested in.
 
 SYSTEM = """You are the guide in Job Transit, an app that helps people plan a career change. The app shows a map \
@@ -92,6 +96,12 @@ something costs money. Keep it to a few good options rather than a long list.
 in your reply: the resources with a line each on why, a first small action for this week, and anything you offer \
 to draft (an email, a message) written out in full in the reply itself. Then save just the links on the step with \
 update_step. Your reply is what they read; never point to "the chat" or "below" for something you haven't written.
+- Documents: when you write something they'll send or keep for this move (a cover letter for an opening, a CV \
+tailored to the move, an outreach message, notes), write it in full in your reply and save it with save_document so \
+it's in the path's Documents section. Build cover letters and CVs only from what they've told you and their profile; \
+never invent employers, dates, degrees or achievements. If something important is missing (where they worked, a \
+result they're proud of), ask first or leave a clear [placeholder]. Revise a document by saving it again under the \
+same title.
 - When drafting a plan, you may include a link or two in a step's detail if you searched for them. Mark steps that \
 build a skill or knowledge as kind "learn": the app schedules short practice sessions for them after 1, 3, 7, 14 and \
 30 days (spaced repetition), with reminders.
@@ -225,6 +235,23 @@ TOOLS = [
         },
     },
     {
+        "name": "save_document",
+        "description": ("App action: keep a document you wrote for this path in its Documents section (a cover "
+                        "letter, a CV tailored to this move, an outreach message, notes). Saving with the title of an "
+                        "existing document replaces it, so use the same title to revise one. Only in a path's "
+                        "conversation."),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Short and specific, e.g. 'Cover letter: Tischler at Holzwerk Berlin'."},
+                "kind": {"type": "string", "enum": DOC_KINDS},
+                "content": {"type": "string", "description": "The whole document in Markdown, ready to send or paste."},
+                "opening_url": {"type": "string", "description": "If it's for one of the openings kept with this path: its URL."},
+            },
+            "required": ["title", "kind", "content"],
+        },
+    },
+    {
         "name": "update_step",
         "description": ("App action: set the resource links shown under one step of their plan (replaces that step's "
                         "earlier resources). Only links with a few words each; the explanation belongs in your reply."),
@@ -343,6 +370,7 @@ TOOL_LABELS = {
     "find_openings": lambda a: "Searching job boards" + (f" in {a['city']}" if a.get("city") else ""),
     "save_plan": lambda a: "Saving your plan",
     "update_step": lambda a: "Updating your plan",
+    "save_document": lambda a: "Saving the document",
     "log_practice": lambda a: "Logging your practice session",
     "read_posting": lambda a: "Reading the posting",
     "open_job": lambda a: "Opening the job on the map",
@@ -419,6 +447,17 @@ class Guide:
             if saved:
                 lines.append("Openings they saved for it: " + "; ".join(
                     f"{o.get('title')} at {o.get('company')} [{o.get('status')}] {o.get('url')}" for o in saved[:10]))
+            docs = [d for d in plan.get("documents") or [] if isinstance(d, dict)]
+            if docs:
+                budget, parts = DOCS_IN_CONTEXT, []
+                for d in docs[:MAX_DOCS]:
+                    text = str(d.get("content", ""))
+                    shown = text[:max(0, budget)]
+                    budget -= len(shown)
+                    parts.append(f"<document title=\"{d.get('title')}\" kind=\"{d.get('kind')}\">\n{shown}"
+                                 + ("\n[…cut]" if len(shown) < len(text) else "") + "\n</document>")
+                lines.append("Documents kept with this path (they may have edited them; revise with save_document "
+                             "and the same title):\n" + "\n".join(parts))
         else:
             lines.append("This is the Explore conversation, not tied to one path.")
         others = (workspace or {}).get("other_plans") or []
@@ -538,6 +577,28 @@ class Guide:
                     f"{o.get('title')} ({u})" for u, o in list(kept.items())[:10]) if kept else
                     "No postings are kept with this path yet: find openings first."}, None
             return {"ok": True}, {"type": "track_application", "url": url, "status": args["status"]}
+        if name == "save_document":
+            plan = (workspace or {}).get("plan")
+            if not plan:
+                return {"error": "Documents are kept in each path. Ask them to open the path's tab (or save a plan "
+                                 "for this move first), then write it there. Meanwhile it's fine to give the text "
+                                 "in your reply."}, None
+            title = str(args.get("title", "")).strip()[:120]
+            content = str(args.get("content", "")).strip()
+            kind = args.get("kind") if args.get("kind") in DOC_KINDS else "notes"
+            if not title or not content:
+                return {"error": "needs a title and the document's text"}, None
+            if len(content) > MAX_DOC_CHARS:
+                return {"error": f"Too long ({len(content)} characters, max {MAX_DOC_CHARS}): shorten it."}, None
+            existing = {str(d.get("title", "")).strip().lower() for d in plan.get("documents") or []}
+            if title.lower() not in existing and len(existing) >= MAX_DOCS:
+                return {"error": f"This path already has {MAX_DOCS} documents. Revise one (same title) or ask them "
+                                 "to remove one in the Documents section."}, None
+            url = str(args.get("opening_url") or "").strip() or None
+            if url and url not in {o.get("url") for o in plan.get("openings") or []}:
+                url = None   # not one of this path's openings: keep the document, drop the link to it
+            return ({"ok": True, "saved": title, "replaced": title.lower() in existing},
+                    {"type": "save_document", "title": title, "kind": kind, "content": content, "opening_url": url})
         if name == "update_step":
             title = str(args.get("title", "")).strip()
             resources = [str(r).strip()[:300] for r in (args.get("resources") or []) if str(r).strip()][:5]

@@ -1,4 +1,4 @@
-import type { ApplicationStatus, Plan, PlanAction, SavedOpening } from "./plan";
+import type { ApplicationStatus, DocumentKind, Plan, PlanAction, SavedOpening } from "./plan";
 import type { Country } from "./location";
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -277,7 +277,8 @@ export type ChatAction =
   | { type: "open_job"; census: number }
   | { type: "suggest_replies"; replies: string[] }
   | { type: "set_location"; places: { city: string; country: Country }[]; remote: boolean }
-  | { type: "openings_found"; census: number; openings: Omit<SavedOpening, "status" | "found">[] }
+  | { type: "save_document"; title: string; kind: DocumentKind; content: string; opening_url?: string | null }
+  | { type: "openings_found"; census: number; openings: Omit<SavedOpening, "status" | "found">[]; via?: "job_page" }
   | { type: "track_application"; url: string; status: ApplicationStatus }
   | { type: "update_step"; title: string; resources: string[] }
   | { type: "log_practice"; title: string }

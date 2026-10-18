@@ -1,16 +1,17 @@
 """Job Transit API.  Run from the repo root:  uv run uvicorn api.app:app --reload --port 8000"""
+import hmac
 import os
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from api.chat import Guide, summarize
 from api.cv import read_cv
 from api.engine import Engine, Profile
-from api import mailer
+from api import feedback, mailer
 from api.openings import find_openings, start_collector, warm
 
 app = FastAPI(title="Job Transit")
@@ -202,6 +203,40 @@ def openings(body: OpeningsIn, request: Request):
     if not mailer.allowed(f"openings:{client_ip(request)}", 60, 3600):   # each search can cost several API calls
         raise HTTPException(429, "Lots of job searches from here this hour. Try again in a bit.")
     return find_openings(engine, body.census, body.city.strip(), body.country)
+
+
+class FeedbackIn(BaseModel):
+    """Save / Not for me on an opening: a label for training later (api/feedback.py)."""
+    browser: str = Field(min_length=8, max_length=40)   # random id kept in the browser, nothing personal
+    label: Literal["interested", "applied", "interview", "offer", "no", "hidden", "found"]
+    previous: Literal["interested", "applied", "interview", "offer", "no", "hidden", "found"] | None = None
+    via: Literal["plan", "guide", "job_page"] | None = None
+    url: str = Field(max_length=2000)
+    move_census: int | None = None
+    move: str | None = Field(None, max_length=200)
+    title: str | None = Field(None, max_length=300)
+    company: str | None = Field(None, max_length=300)
+    location: str | None = Field(None, max_length=300)
+    where: str | None = Field(None, max_length=40)
+
+
+@app.post("/feedback")
+def post_feedback(body: FeedbackIn, request: Request):
+    if not mailer.allowed(f"feedback:{client_ip(request)}", 300, 3600):
+        raise HTTPException(429, "Too many at once.")
+    if not body.url.startswith(("http://", "https://")):
+        raise HTTPException(422, "Not a posting link.")
+    feedback.record(**body.model_dump())
+    return {"ok": True}
+
+
+@app.get("/feedback/export", response_class=PlainTextResponse)
+def export_feedback(token: str = ""):
+    """All labels as CSV, for training. Needs FEEDBACK_EXPORT_TOKEN set on the server."""
+    expected = os.getenv("FEEDBACK_EXPORT_TOKEN", "")
+    if not expected or not hmac.compare_digest(token, expected):
+        raise HTTPException(404, "Not found")
+    return PlainTextResponse(feedback.export_csv(), media_type="text/csv")
 
 
 class EmailPlanIn(BaseModel):
