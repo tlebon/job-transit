@@ -17,13 +17,14 @@ from dotenv import load_dotenv
 
 from api.engine import Engine, Profile
 from api.openings import COUNTRIES, find_openings, read_posting
+from urllib.parse import urlparse
 
 load_dotenv()
 
 CHAT_MODEL = os.getenv("CHAT_MODEL", "claude-sonnet-5-5")
 MAX_TOOL_ROUNDS = 6
 GOALS = ["pay", "stability", "less_ai", "passion"]
-TRACK_STATUSES = ["interested", "applied", "interview", "offer", "no"]   # web/lib/plan.ts ApplicationStatus, minus found/hidden
+TRACK_STATUSES = ["interested", "applied", "interview", "offer", "no", 'hidden']   # web/lib/plan.ts ApplicationStatus, minus found, hidden refers to jobs the user isnt interested in.
 
 SYSTEM = """You are the guide in Job Transit, an app that helps people plan a career change. The app shows a map \
 ("Job City") where every block is an occupation and neighbours need similar skills; the person's next jobs are \
@@ -101,7 +102,8 @@ question: then suggest_replies holds 3 options, the right one plus two plausible
 written alike so the right one doesn't stand out. Mix both kinds. Never put a lone answer next to filler options.
 - End every reply (except an open practice question) by calling suggest_replies, on its own, after you have written your final text: never in the \
 same step as another tool. Give it 2 or 3 short things the person might say next, in their own voice \
-("Make me a plan for this", "What about remote roles?"). If you asked them a question about themselves, offer likely answers (never for quiz or practice questions). If \
+("Make me a plan for this", "What about remote roles?"). In a plan's conversation, suggest next moves on that plan (a step, \
+a practice session, openings, a change to the plan) rather than exploring other jobs. If you asked them a question about themselves, offer likely answers (never for quiz or practice questions). If \
 something important about them is still unknown (what they want from a change, years of experience, their city, \
 what they enjoy), make one suggestion a quick way to tell you ("I care most about pay").
 - Occupations are identified by census codes; get them from search_jobs or recommend, never guess them.
@@ -199,21 +201,22 @@ TOOLS = [
     },
     {
         "name": "read_chat",
-        "description": "TODO (Tim): what read_chat does and when Claude should use it.",
+        "description": "Read the text of a plan's conversation to get context about another plan or conversation.",
         "input_schema": {
             "type": "object",
-            "properties": {"plan": {"type": "string", "description": "TODO (Tim)"}},
+            "properties": {"plan": {"type": "string", "description": "The plan's tab name, possibly shortened."}},
             "required": ["plan"],
         },
     },
     {
         "name": "track_application",
-        "description": "TODO (Tim): what track_application does and when Claude should use it.",
-        "input_schema": {
+        "description": ("App Action: record that the person applied to, had an interview for, got an offer from," 
+          " heard no, or is no longer interested in one of the openings in their plan."), 
+          "input_schema": {
             "type": "object",
             "properties": {
-                "url": {"type": "string", "description": "TODO (Tim)"},
-                "status": {"type": "string", "enum": ["TODO (Tim): TRACK_STATUSES"]},
+                "url": {"type": "string", "description": "The URL of the posting."},
+                "status": {"type": "string", "enum": [s for s in TRACK_STATUSES]},
             },
             "required": ["url", "status"],
         },
@@ -495,15 +498,26 @@ class Guide:
                 "summary": str(args.get("summary", ""))[:300], "steps": steps,
                 "name": str(args.get("name") or "").strip()[:30] or None}
         if name == "read_chat":
-            # Tim: return the recent messages of another conversation (workspace["other_chats"] maps a plan name,
-            # or "Explore", to [{role, content}, ...]). Match args["plan"] loosely (case, partial name); if nothing
-            # matches, return an error that lists the names there are, so Claude can try again.
-            raise NotImplementedError("TODO (Tim): read_chat")
+            workspace = workspace or {}
+            other_chats = workspace.get("other_chats", {})
+            if not other_chats:
+                return {"error": "There are no other conversations yet."}, None
+            wanted = str(args.get("plan", "")).strip().lower()
+            for name, messages in other_chats.items():
+                # either way round ("carpentry plan" contains "carpentry"; "Carpenters" starts like "carpentry")
+                if wanted and (wanted in name.lower() or name.lower() in wanted or name.lower()[:5] == wanted[:5]):
+                    return {"plan": name, "messages": messages}, None   # for Claude to read; nothing changes in the app
+            return {"error": f"No conversation called {args.get('plan')!r}. "
+                             f"The conversations there are: {', '.join(other_chats)}"}, None
         if name == "track_application":
-            # Tim: an app action like save_plan. args: url (of a posting saved with the plan), status (one of
-            # TRACK_STATUSES). Check both, then return a result for Claude and the action for the app:
-            # ({"ok": True, ...}, {"type": "track_application", "url": ..., "status": ...})
-            raise NotImplementedError("TODO (Tim): track_application")
+            if args["status"] not in TRACK_STATUSES:
+                return {'error': f'The status must be one of: {", ".join(TRACK_STATUSES)}'}, None
+            
+            url = str(args.get("url", "")).strip()
+            parts = urlparse(url)
+            if parts.scheme not in ("http", "https") or not parts.netloc:
+                return {"error": "needs the posting's full URL, as shown with the saved opening"}, None
+            return {"ok": True}, {"type": "track_application", "url": url, "status": args["status"]}
         if name == "update_step":
             title = str(args.get("title", "")).strip()
             resources = [str(r).strip()[:300] for r in (args.get("resources") or []) if str(r).strip()][:5]
