@@ -17,6 +17,18 @@ export type Turn = ChatMessage & {
   stopped?: boolean;
 };
 
+/** In a plan's conversation: start from where the plan is, not from scratch. */
+function planStarters(plan: Plan) {
+  const next = plan.steps.find((s) => !s.done);
+  const learning = plan.steps.find((s) => s.sessions && !s.done);
+  return [
+    next && `Help me start: ${next.title}`,
+    "Find openings for this move",
+    learning && learning !== next && `Quiz me on: ${learning.title}`,
+    "What could make this move harder than it looks?",
+  ].filter((s): s is string => !!s);
+}
+
 const STARTERS = [
   "Where could I go that pays more?",
   "Compare my top two next steps",
@@ -215,9 +227,13 @@ export function ChatPanel({ turns, setTurns, profile, selected, onAction, pendin
       <div className="chat-log" ref={log} aria-live="polite">
         {turns.length === 0 && (
           <div className="chat-empty">
-            <p>Ask about your next steps, compare jobs, or get a plan.</p>
+            <p>
+              {plan
+                ? `Your space for the move to ${plan.occupation}. Ask about any step, a practice session, or openings.`
+                : "Ask about your next steps, compare jobs, or get a plan."}
+            </p>
             <div className="chat-starters">
-              {STARTERS.map((s) => (
+              {(plan ? planStarters(plan) : STARTERS).map((s) => (
                 <button key={s} type="button" className="chip" onClick={() => send(s)}>
                   {s}
                 </button>

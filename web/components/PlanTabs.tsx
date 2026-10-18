@@ -9,7 +9,7 @@ type Props = { plans: Plan[]; active: string; busy: Record<string, boolean>; onS
 export function PlanTabs({ plans, active, busy, onSelect }: Props) {
   if (!plans.length) return null;
   const tab = (id: string, label: string, sub?: string) => (
-    <button key={id} type="button" role="tab" aria-selected={active === id} className="plan-tab" onClick={() => onSelect(id)}>
+    <button key={id} type="button" role="tab" aria-selected={active === id} className="plan-tab" title={label} onClick={() => onSelect(id)}>
       <span className="plan-tab-name">
         {label}
         {busy[id] && <span className="plan-tab-busy" aria-label="answering" />}

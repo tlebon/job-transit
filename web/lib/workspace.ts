@@ -27,7 +27,8 @@ export const EMPTY: Workspace = { plans: [], chats: { [EXPLORE]: [] }, active: E
 export const MAX_PLANS = 5;
 
 export const newId = () => `p${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-export const planName = (plan: Plan) => plan.name || plan.occupation;
+/** Tab name: what the guide called it, else the occupation up to its first comma or "&" ("IT project managers"). */
+export const planName = (plan: Plan) => plan.name || plan.occupation.split(/,| & | and /)[0].trim();
 
 export function loadWorkspace(): Workspace {
   try {

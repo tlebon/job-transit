@@ -26,9 +26,10 @@ type Props = {
   onSelect: (census: number) => void;
   onHover: (census: number | null) => void;
   onSelectStart: () => void;
+  wheelZoom?: boolean; // off in the side panel's mini-map, so scrolling the panel doesn't zoom the map
 };
 
-export function CityMap({ city, stops, pins, path, selected, hovered, onSelect, onHover, onSelectStart }: Props) {
+export function CityMap({ city, stops, pins, path, selected, hovered, onSelect, onHover, onSelectStart, wheelZoom = true }: Props) {
   const [view, setView] = useState<View>(FULL);
   const svgRef = useRef<SVGSVGElement>(null);
   const drag = useRef<{ x: number; y: number; view: View } | null>(null);
@@ -66,7 +67,7 @@ export function CityMap({ city, stops, pins, path, selected, hovered, onSelect, 
 
   useEffect(() => {
     const el = svgRef.current;
-    if (!el) return;
+    if (!el || !wheelZoom) return; // the page scrolls past it instead (the zoom buttons still work)
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
       const p = toMap(e.clientX, e.clientY);

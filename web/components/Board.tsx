@@ -157,6 +157,7 @@ export function Board({ city, data, sort, onSort, error, schooling, request, onP
             onSelect={setSelected}
             onHover={setHovered}
             onSelectStart={() => currentCode !== null && setSelected(currentCode)}
+            wheelZoom={!compact || mapExpanded}
           />
         ) : (
           <div className="city city-loading" role="status">
