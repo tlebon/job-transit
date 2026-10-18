@@ -14,7 +14,7 @@ import {
   type PlanStep,
   type SavedOpening,
 } from "@/lib/plan";
-import { planName, setOpeningStatus } from "@/lib/workspace";
+import { planName, removeLink, setOpeningStatus } from "@/lib/workspace";
 import { EmailPlan } from "./EmailPlan";
 import { Markdown } from "./Markdown";
 
@@ -133,6 +133,7 @@ export function PlanCard({ plan, onChange, onOpenStop, onHelp, onPractice, saved
         </button>
       </form>
       <PlanOpenings plan={plan} onStatus={(url, status) => onChange(setOpeningStatus(plan, url, status))} />
+      <PlanLinks plan={plan} onRemove={(url) => onChange(removeLink(plan, url))} />
       <div className="plan-actions">
         <EmailPlan plan={emailPlan ?? plan} />
         {open && (
@@ -228,7 +229,8 @@ function Practice({ step, onPractice, onLog }: { step: PlanStep; onPractice: () 
   const sessions = step.sessions ?? [];
   const next = nextSession(step);
   const done = sessions.filter((s) => s.done).length;
-  const today = new Date().toISOString().slice(0, 10);
+  const now = new Date(); // local date, like the due dates
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   const overdue = next && next.due <= today;
   return (
     <span className="plan-practice">
@@ -339,5 +341,40 @@ function PlanOpenings({ plan, onStatus }: { plan: Plan; onStatus: (url: string, 
         </>
       )}
     </section>
+  );
+}
+
+/** Links the guide gave for this path (its conversation and steps' resources), newest first. */
+function PlanLinks({ plan, onRemove }: { plan: Plan; onRemove: (url: string) => void }) {
+  const links = [...(plan.links ?? [])].reverse();
+  if (!links.length) return null;
+  const host = (url: string) => {
+    try {
+      return new URL(url).hostname.replace(/^www\./, "");
+    } catch {
+      return "";
+    }
+  };
+  return (
+    <details className="plan-openings plan-links" open>
+      <summary>
+        <h4>Links ({links.length})</h4>
+      </summary>
+      <ul>
+        {links.map((l) => (
+          <li key={l.url}>
+            <span className="plan-opening-text">
+              <a href={l.url} target="_blank" rel="noreferrer" className="opening-title">
+                {l.title}
+              </a>
+              <span className="opening-meta">{host(l.url)}</span>
+            </span>
+            <button type="button" className="linkish" aria-label={`Remove link: ${l.title}`} onClick={() => onRemove(l.url)}>
+              ×
+            </button>
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }

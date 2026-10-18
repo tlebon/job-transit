@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import type { Plan } from "@/lib/plan";
 
 const KEY = "job-transit-email-v1"; // { email, token }: token = reminders are on for this browser's plan
@@ -23,9 +23,15 @@ function store(saved: Saved) {
 }
 
 function reason(error: unknown) {
-  const text = error instanceof Error ? error.message : String(error);
-  const detail = text.match(/"detail":"([^"]+)"/);
-  return detail ? detail[1] : "Couldn’t send it. Is the API running?";
+  return error instanceof ApiError ? error.message : "Couldn’t send it. Check your connection and try again.";
+}
+
+/** No paths left: empty the server's reminder list (the address stays subscribed for the next plan). */
+export function clearReminders() {
+  const saved = load();
+  if (!saved.token) return;
+  const empty: Plan = { census: 0, occupation: "", summary: "", created: "", steps: [] };
+  api.syncReminders(saved.token, empty).catch(() => {});
 }
 
 /** Email reminders for the plan: one short email on the day a step or practice session is due. */
@@ -53,7 +59,7 @@ export function EmailPlan({ plan }: { plan: Plan }) {
     if (!saved.token) return;
     const timer = setTimeout(() => {
       api.syncReminders(saved.token!, plan).catch((e) => {
-        if (String(e).startsWith("Error: 404")) update({ ...saved, token: null }); // unsubscribed from an email
+        if (e instanceof ApiError && e.status === 404) update({ ...saved, token: null }); // unsubscribed from an email
       });
     }, 1500);
     return () => clearTimeout(timer);

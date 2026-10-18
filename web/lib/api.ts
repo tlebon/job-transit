@@ -100,15 +100,25 @@ export type CityMap = {
 export type SortKey = "best" | "reachable" | "appealing";
 
 /** The API's own message for a failed request ({"detail": "..."} from FastAPI), else the status and body. */
+export class ApiError extends Error {
+  constructor(message: string, public status: number) {
+    super(message);
+  }
+}
+
+/** The API's own message for a failed request ({"detail": "..."} from FastAPI), with the HTTP status. A list
+ * detail (a 422 validation error) becomes one readable line. */
 async function failure(res: Response): Promise<Error> {
   const text = await res.text();
   try {
     const detail = (JSON.parse(text) as { detail?: unknown }).detail;
-    if (typeof detail === "string") return new Error(detail);
+    if (typeof detail === "string") return new ApiError(detail, res.status);
+    if (Array.isArray(detail) && detail.length)
+      return new ApiError(`The app sent something the server didn’t accept (${String(detail[0]?.loc?.slice(-1)[0] ?? "a field")}).`, res.status);
   } catch {
     // not JSON
   }
-  return new Error(`${res.status} ${text}`);
+  return new ApiError(`${res.status} ${text.slice(0, 200)}`, res.status);
 }
 
 async function getJson<T>(path: string, init?: RequestInit): Promise<T> {

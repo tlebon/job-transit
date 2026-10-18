@@ -27,6 +27,8 @@ export type SavedOpening = {
   found: string; // YYYY-MM-DD
   updated?: string;
 };
+// A link the guide gave in this path's conversation or a step's resources, kept so it's easy to find again.
+export type PlanLink = { url: string; title: string; added: string };
 export type Plan = {
   id?: string; // set once there can be several plans (workspace.ts)
   name?: string; // short tab name ("Carpentry"); the occupation title when the guide gave none
@@ -36,6 +38,8 @@ export type Plan = {
   created: string;
   steps: PlanStep[];
   openings?: SavedOpening[];
+  links?: PlanLink[];
+  hiddenLinks?: string[]; // removed by the person: not collected again
 };
 export type PlanAction = {
   type: "save_plan";

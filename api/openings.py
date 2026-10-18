@@ -167,9 +167,11 @@ def german_titles(engine, census: int) -> list[str]:
         terms = [t.strip() for t in json.loads(text[text.index("["): text.rindex("]") + 1]) if t.strip()][:3]
     except Exception:
         return english   # no key or a bad answer: English titles still find tech jobs; try again next time
+    if not terms:
+        return english   # an empty answer isn't stored, or the Bundesagentur would search nothing for this job for good
     with _write_lock, closing(_connect()) as con, con:
         con.execute("INSERT OR REPLACE INTO german_titles VALUES (?, ?)", (census, json.dumps(terms)))
-    return terms or english
+    return terms
 
 
 def _ba_posting(job: dict, census: int) -> dict:
@@ -368,10 +370,16 @@ def _connect() -> sqlite3.Connection:
     con = sqlite3.connect(CACHE_DB, timeout=15)
     if con.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION:
         with _write_lock:
+            if con.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION:   # another thread just rebuilt it
+                return _connect_tables(con)
             con.executescript(
                 "DROP TABLE IF EXISTS postings; DROP TABLE IF EXISTS feeds; DROP TABLE IF EXISTS titles;"
             )
             con.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+    return _connect_tables(con)
+
+
+def _connect_tables(con: sqlite3.Connection) -> sqlite3.Connection:
     con.executescript("""
         PRAGMA journal_mode = WAL;
         CREATE TABLE IF NOT EXISTS postings (
@@ -609,10 +617,10 @@ def _near(location: str, city: str) -> int:
 
 # Remote postings that are really only for people in the US (or the Americas)
 US_IN_LOCATION = re.compile(r"\b(us|usa|u\.s\.?|united states|north america|americas|canada)\b", re.I)
-EUROPE_IN_LOCATION = re.compile(r"\b(europe|emea|eu|germany|deutschland|uk|worldwide|global|anywhere)\b", re.I)
+EUROPE_IN_LOCATION = re.compile(r"\b(europe|emea|eu|germany|deutschland|uk|worldwide|global)\b", re.I)
 US_IN_TEXT = re.compile(
     r"(must|need to|required to|should) (be )?(based|located|living|reside) in the (us|u\.s\.|usa|united states)"
-    r"|(us|u\.s\.)[- ]based (candidates|applicants|only)|authori[sz]ed to work in the (us|u\.s\.|united states)"
+    r"|\b(us|u\.s\.)[- ]based (candidates|applicants|only)|authori[sz]ed to work in the (us|u\.s\.|united states)"
     r"|\b(us|u\.s\.|north american?) time ?zones?|\b(est|pst|cst|edt|pdt)\b[^.]{0,40}(hours|overlap|time ?zone)",
     re.I,
 )
@@ -627,11 +635,19 @@ def us_only(location: str, text: str) -> bool:
 
 GERMAN_WORDS = set("und der die das mit für wir sie ist ein eine zu von auf bei oder als ihre unser deine du".split())
 ENGLISH_WORDS = set("and the with for we you is a to of on at or as your our are will be".split())
+# "German C1", "fließend Deutsch", "fluent in German and English", "sehr gute Deutschkenntnisse". Not "Germany", and
+# not when the ad says German isn't needed ("keine Deutschkenntnisse erforderlich", "no German required").
 NEEDS_GERMAN = re.compile(
-    r"(deutsch|german)\w*\W{1,30}(c1|c2|b2|fließend|fliessend|fluent|verhandlungssicher|native|muttersprach|required|erforderlich)"
-    r"|(fließend|fliessend|sehr gut|verhandlungssicher|fluent)\w*\W{1,20}(deutsch|german)|deutschkenntnisse",
+    r"\b(deutsch|german)(kenntnisse)?\b(\W+\w+){0,3}?\W+(c1|c2|b2|fließend|fliessend|fluent|verhandlungssicher|native|muttersprach\w*|required|erforderlich)\b"
+    r"|\b(fließend\w*|fliessend\w*|sehr gute?|verhandlungssicher\w*|fluent)\b(\W+\w+){0,2}?\W+(deutsch|german)\b"
+    r"|\b(gute|sehr gute|fließende|fliessende|verhandlungssichere)\s+deutschkenntnisse",
     re.I,
 )
+NO_GERMAN = re.compile(r"\b(kein\w*|no|not|ohne)\W+(\w+\W+){0,2}?(deutsch\w*|german)\b", re.I)
+
+
+def needs_german(text: str) -> bool:
+    return bool(NEEDS_GERMAN.search(text or "")) and not NO_GERMAN.search(text or "")
 
 
 def posting_language(title: str, text: str) -> str | None:
@@ -693,7 +709,8 @@ def find_openings(
             continue
         seen.add(key)
         near = _near(location, city)
-        us = near < 2 and us_only(location, description)
+        # remote-but-US-only isn't remote for someone in Europe; for someone in the US or Canada it is
+        us = near < 2 and country not in ("us", "ca") and us_only(location, description)
         keep.append(
             {
                 "title": title,
@@ -705,7 +722,7 @@ def find_openings(
                 "us_only": us,
                 # Arbeitsagentur text is our own English summary, so its language says nothing
                 "language": None if source == "Arbeitsagentur" else posting_language(title, description),
-                "needs_german": bool(NEEDS_GERMAN.search(f"{title} {description or ''}")),
+                "needs_german": needs_german(f"{title} {description or ''}"),
                 **(json.loads(extra) if extra else {}),   # pay, career_changer, home_office (Arbeitsagentur)
             }
         )
@@ -753,6 +770,7 @@ def find_openings(
     }
 
 
+MAX_PAGE_BYTES = 3_000_000   # read at most this much of a posting's page
 POSTING_TEXT_LIMIT = 6000   # characters (~1,500 tokens): enough to judge a posting, small enough for the chat
 
 
@@ -806,10 +824,12 @@ def _public_url_error(url: str) -> str | None:
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         return "only http(s) links can be read"
     try:
-        address = ipaddress.ip_address(socket.gethostbyname(parsed.hostname))
+        # every address the name resolves to (IPv4 and IPv6), and only public ones: is_global also rules out
+        # carrier-grade NAT (100.64/10) and other ranges is_private misses
+        addresses = {ipaddress.ip_address(info[4][0]) for info in socket.getaddrinfo(parsed.hostname, None)}
     except (OSError, ValueError):
         return "couldn't resolve that address"
-    if address.is_private or address.is_loopback or address.is_link_local or address.is_reserved:
+    if not addresses or any(not a.is_global for a in addresses):
         return "private and local addresses are not allowed"
     return None
 
@@ -848,13 +868,19 @@ def read_posting(url: str) -> dict:
     try:
         with httpx.Client(headers={**HEADERS, "Accept": "text/html"}, timeout=TIMEOUT, follow_redirects=True,
                           event_hooks={"request": [check_redirect]}) as client:
-            response = client.get(url)
-            response.raise_for_status()
+            with client.stream("GET", url) as response:
+                response.raise_for_status()
+                if "html" not in response.headers.get("content-type", "html"):
+                    return snippet_or("that link isn't a web page")
+                body = b""
+                for chunk in response.iter_bytes():   # a page bigger than this isn't a job ad: stop reading
+                    body += chunk
+                    if len(body) > MAX_PAGE_BYTES:
+                        break
+                markup = body.decode(response.encoding or "utf-8", errors="replace")
     except httpx.HTTPError as err:
         return snippet_or(f"couldn't read that page: {err}"[:200])
-    if "html" not in response.headers.get("content-type", "html"):
-        return snippet_or("that link isn't a web page")
-    title, text = to_text(response.text)
+    title, text = to_text(markup)
     if not text:   # pages built entirely in JavaScript have no text to read
         return snippet_or("the page has no readable text (it may need JavaScript)")
     return {"url": url, "title": row[0] if row else title, "text": text, "from": "page"}

@@ -22,7 +22,8 @@ export const DEFAULT_LOCATION: Location = { city: "Berlin", country: "de" };
 export type Search = { places: Location[]; remote: boolean; confirmed: boolean };
 const SEARCH_KEY = "job-transit-search-v1";
 export const DEFAULT_SEARCH: Search = { places: [DEFAULT_LOCATION], remote: false, confirmed: false };
-export const SEARCH_EVENT = "job-transit-search"; // fired on save, so open components pick up the change
+export const SEARCH_EVENT = "job-transit-search";
+export const MAX_PLACES = 3; // each place is its own openings search // fired on save, so open components pick up the change
 
 const validPlace = (p: unknown): p is Location =>
   !!p && typeof (p as Location).city === "string" && COUNTRIES.some(([c]) => c === (p as Location).country);

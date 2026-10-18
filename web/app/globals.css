@@ -616,3 +616,12 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .chat-memory { margin: 4px 0; padding: 6px 10px; border-top: 1px dashed var(--rule); color: var(--ink-3); font-size: 12px; text-align: center; }
 /* the mini-map in the side panel: a vertical swipe scrolls the panel, not the map (expand it to explore) */
 .board-compact .map-slot:not(.map-expanded) .city-svg { touch-action: pan-y; }
+
+/* a path's tab: the plan alone; the map and the job list live in Explore */
+.board-plan-only .board-head, .board-plan-only .map-slot, .board-plan-only .footnote { display: none; }
+.board-plan-only .side:empty { display: none; }
+.plan-links summary { cursor: pointer; list-style: none; }
+.plan-links summary::-webkit-details-marker { display: none; }
+.plan-links summary h4 { display: inline; }
+.plan-links summary h4::after { content: " ▾"; }
+.plan-links:not([open]) summary h4::after { content: " ▸"; }

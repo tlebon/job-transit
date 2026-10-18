@@ -24,6 +24,7 @@ load_dotenv()
 CHAT_MODEL = os.getenv("CHAT_MODEL", "claude-sonnet-5-5")
 MAX_TOOL_ROUNDS = 6
 GOALS = ["pay", "stability", "less_ai", "passion"]
+MAX_PATHS = 5   # web/lib/workspace.ts MAX_PLANS
 TRACK_STATUSES = ["interested", "applied", "interview", "offer", "no", 'hidden']   # web/lib/plan.ts ApplicationStatus, minus found, hidden refers to jobs the user isnt interested in.
 
 SYSTEM = """You are the guide in Job Transit, an app that helps people plan a career change. The app shows a map \
@@ -473,13 +474,14 @@ class Guide:
                 return {"error": "unknown census code; use search_jobs"}, None
             where = location or {"city": "Berlin", "country": "de"}
             if args.get("city"):
-                places = [{"city": args["city"], "country": args.get("country") or where["country"]}]
+                asked = str(args.get("country") or where["country"]).lower()
+                places = [{"city": str(args["city"])[:80], "country": asked if asked in COUNTRIES else where["country"]}]
             else:
                 places = (where.get("places") or [{"city": where["city"], "country": where["country"]}])[:3]
             found = _openings_for_places(e, code, places)
             # the app keeps the best few with the plan for this job, if there is one (openings_found)
-            best = sorted(found["openings"], key=lambda o: (not o.get("where", "").startswith("in "),
-                                                             not o.get("career_changer")))[:5]
+            best = sorted((o for o in found["openings"] if not o.get("us_only")),
+                          key=lambda o: (not o.get("where", "").startswith("in "), not o.get("career_changer")))[:5]
             keep = [{k: o.get(k) for k in ("url", "title", "company", "location", "where", "pay", "career_changer")}
                     for o in best]
             return found, ({"type": "openings_found", "census": code, "openings": keep} if keep else None)
@@ -489,6 +491,11 @@ class Guide:
             code = args.get("census")
             if code not in e.position:
                 return {"error": "unknown census code; use search_jobs"}, None
+            ws = workspace or {}
+            paths = [p.get("census") for p in ws.get("other_plans") or []] + ([ws["plan"].get("census")] if ws.get("plan") else [])
+            if code not in paths and len(paths) >= MAX_PATHS:
+                return {"error": f"They already have {MAX_PATHS} paths (the most the app keeps). Ask which one to "
+                                 "remove first (they can remove it in its plan panel), then save this one."}, None
             steps = [{"title": str(st.get("title", ""))[:80], "detail": str(st.get("detail", ""))[:600],
                       "week": max(1, min(52, int(st.get("week") or 1))),
                       "kind": "learn" if st.get("kind") == "learn" else "do"}
@@ -505,10 +512,13 @@ class Guide:
             if not other_chats:
                 return {"error": "There are no other conversations yet."}, None
             wanted = str(args.get("plan", "")).strip().lower()
-            for name, messages in other_chats.items():
-                # either way round ("carpentry plan" contains "carpentry"; "Carpenters" starts like "carpentry")
-                if wanted and (wanted in name.lower() or name.lower() in wanted or name.lower()[:5] == wanted[:5]):
-                    return {"plan": name, "messages": messages}, None   # for Claude to read; nothing changes in the app
+            # best match first: the exact name, then one containing the other ("the carpenters plan"), then the
+            # same start ("carpentry" for "Carpenters"), so "Data science" doesn't land on "Data analysis"
+            tests = [lambda n: n == wanted, lambda n: wanted in n or n in wanted, lambda n: n[:5] == wanted[:5]]
+            for test in tests if wanted else []:
+                for chat_name, messages in other_chats.items():
+                    if test(chat_name.lower()):
+                        return {"plan": chat_name, "messages": messages}, None   # for Claude to read; nothing changes in the app
             return {"error": f"No conversation called {args.get('plan')!r}. "
                              f"The conversations there are: {', '.join(other_chats)}"}, None
         if name == "track_application":
@@ -518,16 +528,33 @@ class Guide:
             parts = urlparse(url)
             if parts.scheme not in ("http", "https") or not parts.netloc:
                 return {"error": "needs the posting's full URL, as shown with the saved opening"}, None
+            plan = (workspace or {}).get("plan")
+            if not plan:
+                return {"error": "Applications are kept in each path. Ask them to open that path's tab, then update "
+                                 "it there."}, None
+            kept = {o.get("url"): o for o in plan.get("openings") or []}
+            if url not in kept:
+                return {"error": "That posting isn't kept with this path. These are: " + "; ".join(
+                    f"{o.get('title')} ({u})" for u, o in list(kept.items())[:10]) if kept else
+                    "No postings are kept with this path yet: find openings first."}, None
             return {"ok": True}, {"type": "track_application", "url": url, "status": args["status"]}
         if name == "update_step":
             title = str(args.get("title", "")).strip()
             resources = [str(r).strip()[:300] for r in (args.get("resources") or []) if str(r).strip()][:5]
             if not title or not resources:
                 return {"error": "needs the step's title and at least one resource"}, None
+            missing = _missing_step((workspace or {}).get("plan"), title)
+            if missing:
+                return missing, None
             return {"ok": True}, {"type": "update_step", "title": title, "resources": resources}
         if name == "log_practice":
             title = str(args.get("title", "")).strip()
-            return ({"ok": True}, {"type": "log_practice", "title": title}) if title else ({"error": "needs the step title"}, None)
+            if not title:
+                return {"error": "needs the step title"}, None
+            missing = _missing_step((workspace or {}).get("plan"), title)
+            if missing:
+                return missing, None
+            return {"ok": True}, {"type": "log_practice", "title": title}
         if name == "suggest_replies":
             replies = [str(r).strip()[:80] for r in (args.get("replies") or []) if str(r).strip()][:3]
             return {"ok": True}, ({"type": "suggest_replies", "replies": replies} if replies else None)
@@ -546,6 +573,17 @@ class Guide:
                 "type": "set_location", "places": places, "remote": bool(args.get("remote"))}
         if name == "update_profile":
             change = {k: args[k] for k in ("goals", "hobbies", "experience_years", "add_title") if k in args}
+            # the app's profile only accepts 0-60 years and known goals: anything else would make every later
+            # request fail validation
+            if "experience_years" in change:
+                try:
+                    change["experience_years"] = min(60.0, max(0.0, float(change["experience_years"])))
+                except (TypeError, ValueError):
+                    return {"error": "experience_years must be a number of years"}, None
+            if "goals" in change:
+                change["goals"] = [g for g in (change["goals"] or []) if g in GOALS]
+            if "hobbies" in change:
+                change["hobbies"] = str(change["hobbies"] or "")[:500]
             if "add_title" in change:
                 if change["add_title"] not in e.position:
                     return {"error": "unknown census code"}, None
@@ -562,11 +600,14 @@ class Guide:
 
         try:
             system = system_blocks(self.context(profile, selected, location, plan, workspace), summary)
+            workspace = {**(workspace or {}), "plan": plan}   # run_tool checks actions against this path's plan
             convo = [{"role": m["role"], "content": m["content"]} for m in messages if m.get("content")]
             wrote = False   # has text arrived since the last round of real tools? An answer can't end without it.
-            for _ in range(MAX_TOOL_ROUNDS):
+            for round_number in range(MAX_TOOL_ROUNDS):
+                # the last round can't call tools: whatever happened, the answer ends with words
+                last = {"tool_choice": {"type": "none"}} if round_number == MAX_TOOL_ROUNDS - 1 else {}
                 with self.client.messages.stream(model=CHAT_MODEL, max_tokens=2500, system=system,
-                                                 tools=tools_for(location), messages=convo) as stream:
+                                                 tools=tools_for(location), messages=convo, **last) as stream:
                     for ev in stream:
                         if ev.type == "text":
                             wrote = wrote or bool(ev.text.strip())
@@ -623,6 +664,18 @@ class Guide:
             yield event({"type": "error", "message": f"Claude API error: {getattr(error, 'message', error)}"})
         except Exception as error:
             yield event({"type": "error", "message": f"Something went wrong: {error}"})
+
+
+def _missing_step(plan: dict | None, title: str) -> dict | None:
+    """An error for Claude when this path's plan has no step like `title` (matched the way the app matches:
+    the same title, or one containing the other). In Explore there's no plan here, so the app decides."""
+    if not plan:
+        return None
+    wanted = title.strip().lower()
+    titles = [str(s.get("title", "")) for s in plan.get("steps") or []]
+    if any(t.lower() == wanted or wanted in t.lower() or t.lower() in wanted for t in titles if t):
+        return None
+    return {"error": "No step like that in this path's plan. Its steps are: " + "; ".join(titles)}
 
 
 def _openings_for_places(e, code: int, places: list[dict]) -> dict:

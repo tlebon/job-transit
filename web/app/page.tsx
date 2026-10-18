@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Board } from "@/components/Board";
 import { PlanCard } from "@/components/PlanCard";
 import { CvReader, type CvApply } from "@/components/CvReader";
@@ -10,7 +10,8 @@ import { GOALS, GoalPicker } from "@/components/GoalPicker";
 import { AskBar } from "@/components/AskBar";
 import { ChatPanel, type Turn } from "@/components/ChatPanel";
 import { AboutData } from "@/components/AboutData";
-import { COUNTRIES, DEFAULT_SEARCH, loadLocation, loadSearch, placeName, saveSearch, SEARCH_EVENT, type Search } from "@/lib/location";
+import { clearReminders } from "@/components/EmailPlan";
+import { COUNTRIES, DEFAULT_SEARCH, MAX_PLACES, loadLocation, loadSearch, placeName, saveSearch, SEARCH_EVENT, type Search } from "@/lib/location";
 import { LocationEditor } from "@/components/LocationEditor";
 import { ChipGroups } from "@/components/ChipGroups";
 import { ExperiencePicker } from "@/components/ExperiencePicker";
@@ -34,7 +35,9 @@ import {
   addFound,
   EMPTY as EMPTY_WORKSPACE,
   EXPLORE,
+  collectLinks,
   loadWorkspace,
+  MAX_PLANS,
   newId,
   otherChatsForChat,
   otherPlansForChat,
@@ -88,15 +91,25 @@ export default function Home() {
   const [ws, setWsState] = useState<Workspace>(EMPTY_WORKSPACE);
   const wsRef = useRef(ws);
   wsRef.current = ws;
-  const updateWs = (fn: (w: Workspace) => Workspace) =>
-    setWsState((w) => {
-      const next = fn(w);
-      saveWorkspace(next);
-      return next;
-    });
+  const updateWs = (fn: (w: Workspace) => Workspace) => setWsState(fn);
+  // saved shortly after changes, not on every streamed word; and once more when the page is closed
+  const [wsLoaded, setWsLoaded] = useState(false);
+  useEffect(() => {
+    if (!wsLoaded) return;
+    const timer = setTimeout(() => saveWorkspace(ws), 400);
+    return () => clearTimeout(timer);
+  }, [ws, wsLoaded]);
+  useEffect(() => {
+    const flush = () => wsLoadedRef.current && saveWorkspace(wsRef.current);
+    window.addEventListener("pagehide", flush);
+    return () => window.removeEventListener("pagehide", flush);
+  }, []);
+  const wsLoadedRef = useRef(false);
+  wsLoadedRef.current = wsLoaded;
   const plan = activePlan(ws);
   const [busyChats, setBusyChats] = useState<Record<string, boolean>>({});
-  const [planSavedAt, setPlanSavedAt] = useState<number | undefined>(undefined);
+  const [planSaved, setPlanSaved] = useState<{ id: string; at: number } | null>(null);
+  const planSavedAt = planSaved && plan && planSaved.id === plan.id ? planSaved.at : undefined;
   const [aboutOpen, setAboutOpen] = useState(false);
   const [search, setSearchState] = useState<Search>(DEFAULT_SEARCH);
   useEffect(() => {
@@ -127,6 +140,7 @@ export default function Home() {
     document.querySelector(".board-compact")?.scrollTo({ top: 0 });
   }, [ws.active]);
   const [onboarding, setOnboarding] = useState(false);
+  const [profileLoaded, setProfileLoaded] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   useEffect(() => {
@@ -143,6 +157,7 @@ export default function Home() {
       setExtraLabels(saved.extraLabels ?? {});
       setCv(saved.cv ?? null);
     }
+    setProfileLoaded(true);
     let seen = false;
     try {
       seen = localStorage.getItem(ONBOARDED_KEY) === "1";
@@ -155,7 +170,8 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    save({ profile, jobLabel, extraLabels, cv });
+    // not before the saved profile is loaded: in dev, React runs effects twice and would save the empty one over it
+    if (profileLoaded) save({ profile, jobLabel, extraLabels, cv });
     const controller = new AbortController();
     const timer = setTimeout(() => {
       setLoading(true);
@@ -175,7 +191,7 @@ export default function Home() {
       clearTimeout(timer);
       controller.abort();
     };
-  }, [profile, sort, jobLabel, cv]);
+  }, [profile, sort, jobLabel, cv, profileLoaded]);
 
   const update = (patch: Partial<Profile>) => setProfile((p) => ({ ...p, ...patch }));
   // typing shouldn't fire a request per keystroke: keep the draft locally, commit after a pause
@@ -201,7 +217,7 @@ export default function Home() {
       answers: { ...p.answers, ...answers },
       activities,
       tools,
-      experience_years: record.years_experience ?? p.experience_years,
+      experience_years: record.years_experience != null ? Math.min(60, Math.max(0, record.years_experience)) : p.experience_years,
     }));
     if (cvTitles.length) setTitles(cvTitles);
     setCv(record);
@@ -229,11 +245,13 @@ export default function Home() {
   useEffect(() => {
     const saved = loadWorkspace();
     setWsState(saved);
+    setWsLoaded(true);
     if (Object.values(saved.chats).some((t) => t.length)) setChatMode(true); // returning with a conversation
   }, []);
   /** Each conversation writes to its own history, even while another tab is open. */
   const setTurnsFor = (id: string) => (fn: (t: Turn[]) => Turn[]) =>
-    updateWs((w) => ({ ...w, chats: { ...w.chats, [id]: fn((w.chats[id] ?? []) as Turn[]) } }));
+    // a chat that was removed (its path deleted, Start over) mid-answer: the late writes go nowhere
+    updateWs((w) => (id in w.chats ? { ...w, chats: { ...w.chats, [id]: fn(w.chats[id] as Turn[]) } } : w));
   const askFromMap = (question: string) => {
     setPendingQuestion(question);
     setChatMode(true);
@@ -252,12 +270,14 @@ export default function Home() {
       return;
     }
     if (action.type === "save_plan") {
+      const previous = wsRef.current.plans.find((p) => p.census === action.census) ?? null;
+      const saved = { ...planFromAction(action, previous), id: previous?.id ?? newId() };
       updateWs((w) => {
-        const previous = w.plans.find((p) => p.census === action.census) ?? null;
-        const { ws: next, id, created } = upsertPlan(w, planFromAction(action, previous));
-        return created ? { ...next, active: id } : next; // a new plan opens its own tab
+        const { ws: next, id, created } = upsertPlan(w, saved);
+        // a new path opens its tab, but only if you're in the conversation that made it
+        return created && chatId === w.active ? { ...next, active: id } : next;
       });
-      setPlanSavedAt(Date.now());
+      setPlanSaved({ id: saved.id, at: Date.now() });
       return;
     }
     if (action.type === "suggest_replies") return; // shown in the chat itself
@@ -297,7 +317,7 @@ export default function Home() {
       ...p,
       goals: action.goals ?? p.goals,
       hobbies: action.hobbies ?? p.hobbies,
-      experience_years: action.experience_years ?? p.experience_years,
+      experience_years: typeof action.experience_years === "number" ? Math.min(60, Math.max(0, action.experience_years)) : p.experience_years,
       extra_jobs:
         action.add_title !== undefined && action.add_title !== p.job && !p.extra_jobs.includes(action.add_title)
           ? [...p.extra_jobs, action.add_title]
@@ -351,11 +371,21 @@ export default function Home() {
       setHobbiesDraft(null);
       setDescriptionDraft(null);
       if (Array.isArray(saved.plans)) {
-        // plans come back with fresh, empty conversations (conversations aren't in the file)
-        const plans = (saved.plans as Plan[]).filter((p) => Array.isArray(p.steps)).map((p) => ({ ...p, id: p.id ?? newId() }));
+        // paths come back with fresh, empty conversations (conversations aren't in the file); one per job, at most 5
+        const seen = new Set<number>();
+        const plans = (saved.plans as Plan[])
+          .filter((p) => Array.isArray(p.steps) && typeof p.census === "number" && !seen.has(p.census) && seen.add(p.census))
+          .slice(0, MAX_PLANS)
+          .map((p) => ({ ...p, id: p.id ?? newId() }));
         updateWs(() => ({ plans, chats: Object.fromEntries([[EXPLORE, []], ...plans.map((p) => [p.id!, []])]), active: EXPLORE }));
       }
-      if (saved.search?.places) setSearch(saved.search);
+      if (Array.isArray(saved.search?.places)) {
+        const places = (saved.search.places as { city: unknown; country: unknown }[])
+          .filter((p) => typeof p.city === "string" && p.city.trim() && COUNTRIES.some(([c]) => c === p.country))
+          .map((p) => ({ city: (p.city as string).trim().slice(0, 80), country: p.country as Search["places"][number]["country"] }))
+          .slice(0, MAX_PLACES);
+        if (places.length) setSearch({ places, remote: !!saved.search.remote, confirmed: true });
+      }
       finishOnboarding();
     } catch (e) {
       setFileError(`Couldn’t load that file: ${e instanceof Error ? e.message : "unreadable"}.`);
@@ -386,7 +416,7 @@ export default function Home() {
     setChatMode(true);
   };
   // reminders cover every plan: the server keeps one list per address
-  const allPlans: Plan | undefined = ws.plans.length
+  const allPlans: Plan | undefined = useMemo(() => ws.plans.length
     ? {
         census: ws.plans[0].census,
         occupation: ws.plans.map((p) => p.name || p.occupation).join(", "),
@@ -396,7 +426,17 @@ export default function Home() {
           p.steps.map((st) => (ws.plans.length > 1 ? { ...st, title: `${p.name || p.occupation}: ${st.title}` } : st)),
         ),
       }
-    : undefined;
+    : undefined, [ws.plans]);
+  // every path removed while reminders are on: clear the server's list (PlanCard, which syncs, is gone by then)
+  const hadPlans = useRef(false);
+  useEffect(() => {
+    if (!wsLoaded) return;
+    if (ws.plans.length) hadPlans.current = true;
+    else if (hadPlans.current) {
+      hadPlans.current = false;
+      clearReminders();
+    }
+  }, [ws.plans.length, wsLoaded]);
   const chatIds = [EXPLORE, ...ws.plans.map((p) => p.id!)];
 
   return (
@@ -650,7 +690,16 @@ export default function Home() {
                   other_plans: otherPlansForChat(wsRef.current, id),
                   other_chats: otherChatsForChat(wsRef.current, id),
                 })}
-                onBusy={(b) => setBusyChats((m) => (m[id] === b ? m : { ...m, [id]: b }))}
+                onBusy={(b) => {
+                  setBusyChats((m) => (m[id] === b ? m : { ...m, [id]: b }));
+                  // an answer finished: links it gave go to the path's Links
+                  if (!b && id !== EXPLORE)
+                    updateWs((w) => {
+                      const target = w.plans.find((p) => p.id === id);
+                      const next = target && collectLinks(target, w.chats[id] ?? []);
+                      return next && next !== target ? { ...w, plans: w.plans.map((p) => (p.id === id ? next : p)) } : w;
+                    });
+                }}
                 placeholder={own ? `Ask about your path to ${own.name || own.occupation}` : undefined}
                 memory={ws.memory?.[id]}
                 onMemory={(m) =>
@@ -667,6 +716,7 @@ export default function Home() {
         </div>
         <Board
           compact={chatMode}
+          planOnly={chatMode && Boolean(plan)}
           city={city}
           data={data}
           sort={sort}
@@ -694,6 +744,7 @@ export default function Home() {
           )}
           {plan && (
             <PlanCard
+              key={plan.id}
               plan={plan}
               emailPlan={allPlans}
               onChange={(next) => setPlanById(plan.id!, next)}
@@ -705,7 +756,10 @@ export default function Home() {
                 setPendingQuestion(`Help me get started on this step of my plan: “${step.title}”`);
                 setChatMode(true);
               }}
-              onOpenStop={(census) => setFocus({ census, at: Date.now() })}
+              onOpenStop={(census) => {
+                if (chatMode) openTab(EXPLORE); // the map lives in Explore
+                setFocus({ census, at: Date.now() });
+              }}
               savedAt={planSavedAt}
             />
           )}

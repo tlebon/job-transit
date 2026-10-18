@@ -4,7 +4,7 @@ import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { searchForChat } from "@/lib/location";
 import { COMPACT_AT_CHARS, COMPACT_AT_MESSAGES, KEEP_RECENT, SEND_MAX_CHARS, type Memory } from "@/lib/workspace";
 import type { Plan } from "@/lib/plan";
-import { api, streamChat, type ChatAction, type ChatMessage, type Profile } from "@/lib/api";
+import { api, ApiError, streamChat, type ChatAction, type ChatMessage, type Profile } from "@/lib/api";
 import { Markdown } from "./Markdown";
 
 // failed: a question that never reached the guide (API down, network); shown with Retry, left out of the history
@@ -67,16 +67,20 @@ export function ChatPanel({ turns, setTurns, profile, selected, onAction, pendin
   }, [turns]);
   useEffect(() => () => controller.current?.abort(), []);
   useEffect(() => {
-    if (!busy) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && controller.current?.abort();
+    if (!busy || hidden) return; // only the conversation you're looking at; a background answer keeps going
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || document.querySelector(".modal-backdrop, .map-expanded")) return; // Esc closes those first
+      controller.current?.abort();
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [busy]);
+  }, [busy, hidden]);
   useEffect(() => {
     if (!pendingQuestion) {
-      input.current?.focus();
+      if (!hidden) input.current?.focus();
       return;
     }
+    if (busy) return; // still answering: send it when this answer is done (the effect runs again then)
     // Deferred so React's dev-mode double effect run sends once: the first timer is cleared before it fires.
     const question = pendingQuestion;
     const timer = setTimeout(() => {
@@ -85,7 +89,7 @@ export function ChatPanel({ turns, setTurns, profile, selected, onAction, pendin
     }, 0);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingQuestion]);
+  }, [pendingQuestion, busy]);
 
   // The input grows with the text (up to ~6 lines, then scrolls) instead of a drag handle.
   useLayoutEffect(() => {
@@ -95,7 +99,9 @@ export function ChatPanel({ turns, setTurns, profile, selected, onAction, pendin
     el.style.height = `${Math.min(el.scrollHeight + el.offsetHeight - el.clientHeight, 160)}px`;
   }, [draft]);
 
-  const update = (fn: (last: Turn) => Turn) => setTurns((t) => [...t.slice(0, -1), fn(t[t.length - 1])]);
+  // changes the reply being written; a no-op if it's gone (New conversation, or the path removed mid-answer)
+  const update = (fn: (last: Turn) => Turn) =>
+    setTurns((t) => (t[t.length - 1]?.role === "assistant" ? [...t.slice(0, -1), fn(t[t.length - 1])] : t));
 
   /** The question didn't get an answer: drop the empty reply and mark the question as not sent. If part of an
    * answer already arrived, keep it and show the error under it instead. */
@@ -189,6 +195,7 @@ export function ChatPanel({ turns, setTurns, profile, selected, onAction, pendin
       if (!answered && !failed) fail("The guide didn’t write an answer. Try again.");
     } catch (e) {
       if ((e as Error).name === "AbortError") stopped(question, answered);
+      else if (e instanceof ApiError) fail(e.message); // the server's own reason: a limit, a too-long conversation
       else fail("Couldn’t reach the guide. Check your connection or try again in a moment.");
     } finally {
       setTurns((t) => {
@@ -291,6 +298,7 @@ export function ChatPanel({ turns, setTurns, profile, selected, onAction, pendin
           ref={input}
           className="field chat-box"
           rows={1}
+          maxLength={20000}
           value={draft}
           placeholder={placeholder ?? "Ask anything about your next move"}
           onChange={(e) => setDraft(e.target.value)}

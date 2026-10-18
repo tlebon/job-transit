@@ -95,6 +95,7 @@ export function Openings({ census, onFound }: { census: number; onFound?: (censu
           className="field"
           aria-label="City"
           placeholder="City"
+          maxLength={80}
           value={where.city}
           onChange={(e) => setWhere({ ...where, city: e.target.value })}
         />

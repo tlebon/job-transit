@@ -97,9 +97,9 @@ def _plain(text: str) -> str:
 
 def _nice_date(iso: str) -> str:
     try:
-        return datetime.strptime(iso, "%Y-%m-%d").strftime("%a %d %b")
-    except ValueError:
-        return iso
+        return datetime.strptime(str(iso), "%Y-%m-%d").strftime("%a %d %b")
+    except (TypeError, ValueError):
+        return str(iso or "")
 
 
 def _footer(token: str | None) -> tuple[str, str]:
@@ -170,23 +170,38 @@ def _reminder_rows(token: str, plan: dict):
     for s in plan.get("steps") or []:
         if s.get("done") or not s.get("title"):
             continue
-        if s.get("due", "") >= today:
-            rows.append((token, "step", str(s["title"])[:120], s["due"]))
+        due = str(s.get("due") or "")
+        if due >= today:
+            rows.append((token, "step", str(s["title"])[:120], due))
         for x in s.get("sessions") or []:
-            if not x.get("done") and x.get("due", "") >= today:
-                rows.append((token, "practice", str(s["title"])[:120], x["due"]))
+            when = str(x.get("due") or "")
+            if not x.get("done") and when >= today:
+                rows.append((token, "practice", str(s["title"])[:120], when))
     return rows[:200]
+
+
+def _replace_unsent(con, token: str, plan: dict):
+    """Swap the unsent reminders for the plan's current ones, leaving out any already sent (a reminder sent this
+    morning must not go out again because the plan was edited this afternoon)."""
+    con.execute("DELETE FROM reminders WHERE token = ? AND sent_at IS NULL", (token,))
+    sent = {tuple(r) for r in con.execute(
+        "SELECT kind, title, due FROM reminders WHERE token = ? AND sent_at IS NOT NULL", (token,))}
+    rows = [r for r in _reminder_rows(token, plan) if (r[1], r[2], r[3]) not in sent]
+    con.executemany("INSERT INTO reminders (token, kind, title, due) VALUES (?, ?, ?, ?)", rows)
 
 
 def subscribe(email: str, plan: dict) -> str:
     """Start (or restart) reminders for this address; returns the token for syncing and unsubscribing."""
     with _lock, closing(_connect()) as con, con:
-        row = con.execute("SELECT token FROM subscribers WHERE email = ?", (email,)).fetchone()
-        token = row[0] if row else secrets.token_urlsafe(24)
+        # always a new token: handing back an existing one would let anyone who knows an address take over its
+        # reminders. An earlier subscription for the same address is replaced (its browser sees reminders off).
+        for (old,) in con.execute("SELECT token FROM subscribers WHERE email = ?", (email,)).fetchall():
+            con.execute("DELETE FROM reminders WHERE token = ?", (old,))
+            con.execute("DELETE FROM subscribers WHERE token = ?", (old,))
+        token = secrets.token_urlsafe(24)
         con.execute("INSERT OR REPLACE INTO subscribers VALUES (?, ?, ?, ?)",
                     (token, email, str(plan.get("occupation", ""))[:120], time.time()))
-        con.execute("DELETE FROM reminders WHERE token = ? AND sent_at IS NULL", (token,))
-        con.executemany("INSERT INTO reminders (token, kind, title, due) VALUES (?, ?, ?, ?)", _reminder_rows(token, plan))
+        _replace_unsent(con, token, plan)
     return token
 
 
@@ -196,8 +211,7 @@ def sync(token: str, plan: dict) -> bool:
         if not con.execute("SELECT 1 FROM subscribers WHERE token = ?", (token,)).fetchone():
             return False
         con.execute("UPDATE subscribers SET occupation = ? WHERE token = ?", (str(plan.get("occupation", ""))[:120], token))
-        con.execute("DELETE FROM reminders WHERE token = ? AND sent_at IS NULL", (token,))
-        con.executemany("INSERT INTO reminders (token, kind, title, due) VALUES (?, ?, ?, ?)", _reminder_rows(token, plan))
+        _replace_unsent(con, token, plan)
     return True
 
 

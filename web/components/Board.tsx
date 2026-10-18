@@ -25,11 +25,12 @@ type Props = {
   focus?: { census: number; at: number } | null; // ask the board to open a stop (e.g. from the guide)
   onSelectedChange?: (census: number | null) => void;
   compact?: boolean; // beside the chat: small map on top (expandable), stop pages below
+  planOnly?: boolean; // a path's tab: just its plan (children), no map or job list; a job the guide opens shows below
 };
 
 const PIN_COUNT = 10;
 
-export function Board({ city, data, sort, onSort, error, schooling, request, onPlan, focus, onSelectedChange, compact, children, mapOverlay, planSavedAt, loading, onAbout, onOpeningsFound }: Props) {
+export function Board({ city, data, sort, onSort, error, schooling, request, onPlan, focus, onSelectedChange, compact, planOnly, children, mapOverlay, planSavedAt, loading, onAbout, onOpeningsFound }: Props) {
   const [selected, setSelected] = useState<number | null>(null);
   const [mapExpanded, setMapExpanded] = useState(false);
   useEffect(() => {
@@ -38,6 +39,9 @@ export function Board({ city, data, sort, onSort, error, schooling, request, onP
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [mapExpanded]);
+  useEffect(() => {
+    setSelected(null); // a job opened in Explore doesn't follow into a path's tab, or back
+  }, [planOnly]); // before the focus effect: "Show on the map" switches tab and opens a job in one go
   useEffect(() => {
     if (focus) setSelected(focus.census);
   }, [focus]);
@@ -74,7 +78,7 @@ export function Board({ city, data, sort, onSort, error, schooling, request, onP
   const baseSchooling = schooling ?? yearsFor(start?.entry_education) ?? 4;
 
   return (
-    <section className={compact ? "board board-compact" : "board"}>
+    <section className={compact ? (planOnly ? "board board-compact board-plan-only" : "board board-compact") : "board"}>
       <div className="board-head">
         <div className="board-head-top">
           <div>
@@ -205,7 +209,7 @@ export function Board({ city, data, sort, onSort, error, schooling, request, onP
               )}
               {planBeside && sideTab === "plan" ? (
                 children
-              ) : pins.length ? (
+              ) : planOnly ? null : pins.length ? (
                 <StopList pins={pins} sort={sort} onSort={onSort} selected={selected} onSelect={setSelected} onHover={setHovered} />
               ) : (
                 <Legend />
