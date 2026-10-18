@@ -606,7 +606,7 @@ export default function Home() {
           </div>
 
           <div className="profile-file">
-            <span className="q-help">Your profile and plans stay in this browser. Save them to a file to pick them up on another device.</span>
+            <span className="q-help">Your profile and paths stay in this browser. Save them to a file to pick them up on another device.</span>
             <div className="profile-file-actions">
               <button type="button" className="linkish" onClick={saveToFile}>
                 Save to a file
@@ -650,7 +650,7 @@ export default function Home() {
                   other_chats: otherChatsForChat(wsRef.current, id),
                 })}
                 onBusy={(b) => setBusyChats((m) => (m[id] === b ? m : { ...m, [id]: b }))}
-                placeholder={own ? `Ask about your ${own.name || own.occupation} plan` : undefined}
+                placeholder={own ? `Ask about your path to ${own.name || own.occupation}` : undefined}
                 memory={ws.memory?.[id]}
                 onMemory={(m) =>
                   updateWs((w) => {

@@ -18,18 +18,18 @@ export function PlanTabs({ plans, active, busy, onSelect }: Props) {
     </button>
   );
   return (
-    <div className="plan-tabs" role="tablist" aria-label="Your conversations">
+    <div className="plan-tabs" role="tablist" aria-label="Explore and your paths">
       {tab(EXPLORE, "Explore", "everything else")}
       {plans.map((p) => tab(p.id!, planName(p), `${p.steps.filter((s) => s.done).length} of ${p.steps.length} done`))}
     </div>
   );
 }
 
-/** In Explore: the plans so far, to open one. */
+/** In Explore: the paths so far, to open one. */
 export function PlansList({ plans, onOpen }: { plans: Plan[]; onOpen: (id: string) => void }) {
   return (
     <section className="plans-list">
-      <h3>Your plans</h3>
+      <h3>Your paths</h3>
       <ul>
         {plans.map((p) => (
           <li key={p.id}>
@@ -44,7 +44,7 @@ export function PlansList({ plans, onOpen }: { plans: Plan[]; onOpen: (id: strin
           </li>
         ))}
       </ul>
-      <p className="q-help">Each plan has its own conversation. Ask here to compare them or to start another.</p>
+      <p className="q-help">Each path has its plan, openings and its own conversation. Ask here to compare them or to start another.</p>
     </section>
   );
 }

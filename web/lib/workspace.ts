@@ -74,8 +74,8 @@ export function upsertPlan(ws: Workspace, plan: Plan): { ws: Workspace; id: stri
   const intro: StoredTurn = {
     role: "assistant",
     content:
-      `This is the space for your move to **${plan.occupation}**. Your plan is in the plan panel. ` +
-      "Ask me anything about it here: help with a step, a practice session, openings, or changes to the plan.",
+      `This is your path to **${plan.occupation}**: its plan and openings are in the panel, and this conversation ` +
+      "is just about this move. Ask me for help with a step, a practice session, openings, or changes to the plan.",
     suggestions: ["Help me start the first step", "Find openings for this move", "Quiz me on what I'm learning"],
   };
   return {

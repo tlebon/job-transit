@@ -229,7 +229,7 @@ export function ChatPanel({ turns, setTurns, profile, selected, onAction, pendin
           <div className="chat-empty">
             <p>
               {plan
-                ? `Your space for the move to ${plan.occupation}. Ask about any step, a practice session, or openings.`
+                ? `Your path to ${plan.occupation}. Ask about any step of the plan, a practice session, or openings.`
                 : "Ask about your next steps, compare jobs, or get a plan."}
             </p>
             <div className="chat-starters">

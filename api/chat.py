@@ -55,10 +55,12 @@ moving to Germany often don't speak it yet. Leave out us_only postings unless th
 (pay where they live, courses nearby): which city or cities, and whether remote work is fine. Offer likely answers \
 as suggestions ("Berlin", "Berlin or remote", "Remote anywhere in Europe"). Save the answer with set_location, then \
 carry on with what they asked.
-- The app keeps one plan per move, each with its own conversation, plus Explore for everything else. In a plan's \
-conversation, stay with that move. If they want to plan a different move, you can save_plan for it: it opens in \
-its own tab, so tell them that. In Explore, help them compare moves and start plans. You see short summaries of \
-their other plans; when they refer to something said in another conversation, read it with read_chat.
+- Words: a "path" is one move they're weighing, with its own tab in the app: its plan, its openings and its own \
+conversation. The "plan" is the dated steps inside a path. Explore is the conversation for everything that isn't one \
+path yet. Use these words with the person too. In a path's conversation, stay with that move. If they want to plan a \
+different move, save_plan for it: that opens a new path in its own tab, so tell them. In Explore, help them compare \
+moves and start paths. You see short summaries of their other paths; when they refer to something said in another \
+conversation, read it with read_chat.
 - The best few openings from find_openings are kept in the plan for that job, where they can save them and track \
 applying. When they tell you they applied, had an interview, got an offer or heard no for one of those, update it \
 with track_application.
@@ -102,7 +104,7 @@ question: then suggest_replies holds 3 options, the right one plus two plausible
 written alike so the right one doesn't stand out. Mix both kinds. Never put a lone answer next to filler options.
 - End every reply (except an open practice question) by calling suggest_replies, on its own, after you have written your final text: never in the \
 same step as another tool. Give it 2 or 3 short things the person might say next, in their own voice \
-("Make me a plan for this", "What about remote roles?"). In a plan's conversation, suggest next moves on that plan (a step, \
+("Make me a plan for this", "What about remote roles?"). In a path's conversation, suggest next moves on that path (a step, \
 a practice session, openings, a change to the plan) rather than exploring other jobs. If you asked them a question about themselves, offer likely answers (never for quiz or practice questions). If \
 something important about them is still unknown (what they want from a change, years of experience, their city, \
 what they enjoy), make one suggestion a quick way to tell you ("I care most about pay").
@@ -170,13 +172,13 @@ TOOLS = [
     {
         "name": "save_plan",
         "description": ("App action: save a step-by-step plan for moving to one occupation. Each occupation has one "
-                        "plan with its own tab and conversation: saving for an occupation that has a plan revises it; "
+                        "path (a tab with its own conversation): saving for an occupation that already has one revises its plan; "
                         "a new occupation opens a new tab."),
         "input_schema": {
             "type": "object",
             "properties": {
                 "census": {"type": "integer", "description": "The destination's census code."},
-                "name": {"type": "string", "description": ("Short tab name for the plan in their words, 1-3 words "
+                "name": {"type": "string", "description": ("Short name for the path's tab in their words, 1-3 words "
                                                            "(\"Carpentry\", \"Comedy\", \"Data science\").")},
                 "summary": {"type": "string", "description": "One sentence: the move and the main thing to close."},
                 "steps": {
@@ -201,10 +203,10 @@ TOOLS = [
     },
     {
         "name": "read_chat",
-        "description": "Read the text of a plan's conversation to get context about another plan or conversation.",
+        "description": "Read another path's conversation (or Explore's): its recent messages, for context the summaries don't have.",
         "input_schema": {
             "type": "object",
-            "properties": {"plan": {"type": "string", "description": "The plan's tab name, possibly shortened."}},
+            "properties": {"plan": {"type": "string", "description": "The path's tab name, or Explore, possibly shortened."}},
             "required": ["plan"],
         },
     },
@@ -410,17 +412,17 @@ class Guide:
                                 + (f", next {left[0].get('due')}" if left else ""))
                 return (f"[{'; '.join(tags)}] " if tags else "") + str(st.get("title", ""))
             steps = "; ".join(describe(st) for st in plan["steps"][:12])
-            lines.append(f"This conversation belongs to their plan \"{plan.get('name') or plan.get('occupation')}\", "
-                         f"toward {plan.get('occupation', '?')} (census {plan.get('census')}): {steps}")
+            lines.append(f"This conversation belongs to their path \"{plan.get('name') or plan.get('occupation')}\", "
+                         f"toward {plan.get('occupation', '?')} (census {plan.get('census')}). Its plan: {steps}")
             saved = [o for o in plan.get("openings") or [] if o.get("status") not in ("found", "hidden")]
             if saved:
                 lines.append("Openings they saved for it: " + "; ".join(
                     f"{o.get('title')} at {o.get('company')} [{o.get('status')}] {o.get('url')}" for o in saved[:10]))
         else:
-            lines.append("This is the Explore conversation, not tied to one plan.")
+            lines.append("This is the Explore conversation, not tied to one path.")
         others = (workspace or {}).get("other_plans") or []
         if others:
-            lines.append("Their other plans (each has its own conversation): " + "; ".join(
+            lines.append("Their other paths (each has its own conversation): " + "; ".join(
                 f"{o.get('name')} (toward {o.get('occupation')}, census {o.get('census')}, "
                 f"{o.get('steps_done')} of {o.get('steps')} steps done, {o.get('saved_openings', 0)} saved openings)"
                 for o in others))
@@ -512,7 +514,6 @@ class Guide:
         if name == "track_application":
             if args["status"] not in TRACK_STATUSES:
                 return {'error': f'The status must be one of: {", ".join(TRACK_STATUSES)}'}, None
-            
             url = str(args.get("url", "")).strip()
             parts = urlparse(url)
             if parts.scheme not in ("http", "https") or not parts.netloc:

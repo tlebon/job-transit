@@ -33,6 +33,7 @@ const dateFormat = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "
 /** The saved plan: steps to tick off, edit or add to, with target dates and a calendar export for reminders. */
 export function PlanCard({ plan, onChange, onOpenStop, onHelp, onPractice, savedAt, emailPlan }: Props) {
   const [editing, setEditing] = useState<string | null>(null);
+  const [removing, setRemoving] = useState(false);
   const card = useRef<HTMLDetailsElement>(null);
   const [fresh, setFresh] = useState(false);
   useEffect(() => {
@@ -147,9 +148,21 @@ export function PlanCard({ plan, onChange, onOpenStop, onHelp, onPractice, saved
         <button type="button" className="linkish" onClick={() => onOpenStop(plan.census)}>
           Show on the map
         </button>
-        <button type="button" className="linkish" onClick={() => onChange(null)}>
-          Remove plan
-        </button>
+        {removing ? (
+          <span className="q-help">
+            Remove this path, its openings and its conversation?{" "}
+            <button type="button" className="linkish" onClick={() => onChange(null)}>
+              Remove
+            </button>{" "}
+            <button type="button" className="linkish" onClick={() => setRemoving(false)}>
+              Keep it
+            </button>
+          </span>
+        ) : (
+          <button type="button" className="linkish" onClick={() => setRemoving(true)}>
+            Remove this path
+          </button>
+        )}
       </div>
     </details>
   );
