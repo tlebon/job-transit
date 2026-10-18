@@ -207,7 +207,8 @@ def openings(body: OpeningsIn, request: Request):
 
 class FeedbackIn(BaseModel):
     """Save / Not for me on an opening: a label for training later (api/feedback.py)."""
-    browser: str = Field(min_length=8, max_length=40)   # random id kept in the browser, nothing personal
+    browser: str = Field(min_length=8, max_length=40)   # random id kept in the browser
+    email: str | None = Field(None, max_length=320)   # if they gave one for reminders: only a keyed hash is kept
     label: Literal["interested", "applied", "interview", "offer", "no", "hidden", "found"]
     previous: Literal["interested", "applied", "interview", "offer", "no", "hidden", "found"] | None = None
     via: Literal["plan", "guide", "job_page"] | None = None
@@ -226,7 +227,10 @@ def post_feedback(body: FeedbackIn, request: Request):
         raise HTTPException(429, "Too many at once.")
     if not body.url.startswith(("http://", "https://")):
         raise HTTPException(422, "Not a posting link.")
-    feedback.record(**body.model_dump())
+    data = body.model_dump()
+    if data["email"] and not mailer.valid_email(data["email"]):
+        data["email"] = None
+    feedback.record(**data)
     return {"ok": True}
 
 

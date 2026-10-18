@@ -67,8 +67,9 @@ export function AboutData({ onClose }: Props) {
               <dd>
                 Your profile and plan stay in this browser. If you turn on email reminders, we store your address and
                 the reminder dates, and every email has a link to stop them. When you save an opening or mark it “Not
-                for me”, we keep that choice with the posting, under a random id for this browser and nothing else
-                about you, to learn which openings to show first.
+                for me”, we keep that choice with the posting, to learn which openings to show first. It’s kept under
+                a random id for this browser, and, if you gave an email for reminders, a scrambled code made from it
+                (never the address itself) so your devices count as one person.
               </dd>
             </div>
           </dl>

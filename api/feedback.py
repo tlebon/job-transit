@@ -2,13 +2,18 @@
 
 Each row is one click: the label (the status the person chose), the move it was for, and a snapshot of the
 posting's features taken now, since the openings cache is rebuilt and postings expire. Anonymous: the browser
-sends a random id (not an email or name) so rows from one person can be grouped, nothing else about them.
+sends a random id so rows from one browser can be grouped. If they gave an email (for reminders), it also sends that,
+and we keep only a keyed hash of it (HMAC with FEEDBACK_SECRET), so one person's phone and laptop link up without
+the address being stored here. Without FEEDBACK_SECRET set, no hash is kept: a plain hash of an email can be reversed
+by guessing addresses.
 
 Lives in data/cache next to the reminders, which is the volume on Railway, so it survives deploys. The openings
 cache in the same folder gets rebuilt; this file is separate and never is.
 Export: GET /feedback/export?token=$FEEDBACK_EXPORT_TOKEN (CSV).
 """
 import csv
+import hashlib
+import hmac
 import io
 import json
 import os
@@ -21,7 +26,7 @@ from api.openings import _connect as _openings_db, needs_german, posting_languag
 
 DB = Path(os.getenv("FEEDBACK_DB", Path(__file__).resolve().parent.parent / "data" / "cache" / "feedback.sqlite"))
 LABELS = ("interested", "applied", "interview", "offer", "no", "hidden", "found")
-COLUMNS = ["at", "browser", "label", "previous", "via", "move_census", "move", "url", "title", "company", "location",
+COLUMNS = ["at", "browser", "person", "label", "previous", "via", "move_census", "move", "url", "title", "company", "location",
            "where_", "source", "posting_census", "match_score", "needs_german", "language", "pay", "career_changer",
            "home_office", "description"]
 
@@ -31,7 +36,19 @@ def _connect() -> sqlite3.Connection:
     con = sqlite3.connect(DB, timeout=15)
     con.execute(f"""CREATE TABLE IF NOT EXISTS labels (
         id INTEGER PRIMARY KEY, {", ".join(f"{c} {'REAL' if c in ('at', 'match_score') else 'TEXT'}" for c in COLUMNS)})""")
+    have = {row[1] for row in con.execute("PRAGMA table_info(labels)")}
+    for column in COLUMNS:   # a file from before a column was added
+        if column not in have:
+            con.execute(f"ALTER TABLE labels ADD COLUMN {column} TEXT")
     return con
+
+
+def person(email: str | None) -> str | None:
+    """The same id for the same email on any device; not reversible without the server's secret."""
+    secret = os.getenv("FEEDBACK_SECRET", "")
+    if not email or not secret:
+        return None
+    return hmac.new(secret.encode(), email.strip().lower().encode(), hashlib.sha256).hexdigest()[:32]
 
 
 def _posting(url: str) -> dict:
@@ -56,12 +73,12 @@ def _posting(url: str) -> dict:
     }
 
 
-def record(browser: str, label: str, url: str, previous: str | None = None, via: str | None = None,
+def record(browser: str, label: str, url: str, email: str | None = None, previous: str | None = None, via: str | None = None,
            move_census: int | None = None, move: str | None = None, title: str | None = None,
            company: str | None = None, location: str | None = None, where: str | None = None):
     """One label. The client's title/company/location fill in when the cache no longer has the posting."""
     row = {"title": title, "company": company, "location": location, **_posting(url)}
-    row.update({"at": time.time(), "browser": browser, "label": label, "previous": previous, "via": via,
+    row.update({"at": time.time(), "browser": browser, "person": person(email), "label": label, "previous": previous, "via": via,
                 "move_census": move_census, "move": move, "url": url, "where_": where})
     values = [row.get(c) for c in COLUMNS]
     values = [json.dumps(v) if isinstance(v, (dict, list)) else (str(v) if isinstance(v, bool) else v) for v in values]

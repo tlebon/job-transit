@@ -1,5 +1,6 @@
-// Save / Not for me on openings, sent to the API as labels for training later (api/feedback.py). Anonymous: a
-// random id for this browser groups one person's clicks, nothing else about them is sent. Fire and forget.
+// Save / Not for me on openings, sent to the API as labels for training later (api/feedback.py). A random id for
+// this browser groups one person's clicks; if they gave an email for reminders it goes too, and the server keeps only
+// a keyed hash of it, so their devices link up. Fire and forget.
 import { API_URL } from "./api";
 import type { ApplicationStatus, Plan, SavedOpening } from "./plan";
 
@@ -18,6 +19,15 @@ function browserId(): string {
   }
 }
 
+function knownEmail(): string | null {
+  try {
+    const email = (JSON.parse(localStorage.getItem("job-transit-email-v1") ?? "{}") as { email?: string }).email;
+    return email?.trim() ? email.trim().slice(0, 320) : null;
+  } catch {
+    return null;
+  }
+}
+
 export type Via = "plan" | "guide" | "job_page";
 
 /** One label: `status` for this opening in this path. Openings just found are logged as "found" (shown, no answer yet). */
@@ -29,6 +39,7 @@ export function logLabel(plan: Plan, opening: SavedOpening | Omit<SavedOpening, 
       keepalive: true,
       body: JSON.stringify({
         browser: browserId(),
+        email: knownEmail(),
         label: status,
         previous: previous ?? null,
         via,
