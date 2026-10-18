@@ -270,7 +270,7 @@ TOOLS = [
                 "places": {"type": "array", "minItems": 1, "maxItems": 5, "items": {
                     "type": "object",
                     "properties": {"city": {"type": "string"},
-                                   "country": {"type": "string", "enum": [c for c, _ in COUNTRIES]}},
+                                   "country": {"type": "string", "enum": COUNTRIES}},
                     "required": ["city", "country"]}},
                 "remote": {"type": "boolean", "description": "Open to remote work."},
             },
@@ -300,9 +300,9 @@ WEB_SEARCH_MAX_USES = 3   # per request round; $10 per 1,000 searches plus the r
 def tools_for(location: dict | None) -> list[dict]:
     """Our tools plus Claude's server-side web search, localized to the person's city when we know it."""
     search = {"type": "web_search_20250305", "name": "web_search", "max_uses": WEB_SEARCH_MAX_USES}
-    if location and location.get("city"):
-        search["user_location"] = {"type": "approximate", "city": location["city"],
-                                   "country": (location.get("country") or "de").upper()}
+    country = str((location or {}).get("country") or "de").upper()
+    if location and location.get("city") and len(country) == 2:   # the API wants an ISO code; skip it if it's odd
+        search["user_location"] = {"type": "approximate", "city": location["city"], "country": country}
     # prompt caching: tools up to here are the same for everyone, so they're cached (read back at a tenth of the cost)
     return TOOLS[:-1] + [{**TOOLS[-1], "cache_control": {"type": "ephemeral"}}, search]
 
@@ -539,7 +539,7 @@ class Guide:
         if name == "set_location":
             places = [{"city": str(p.get("city", "")).strip()[:80], "country": p.get("country")}
                       for p in (args.get("places") or [])[:5]
-                      if str(p.get("city", "")).strip() and p.get("country") in {c for c, _ in COUNTRIES}]
+                      if str(p.get("city", "")).strip() and p.get("country") in COUNTRIES]
             if not places:
                 return {"error": "give at least one city with a country code"}, None
             return {"ok": True, "places": places, "remote": bool(args.get("remote"))}, {

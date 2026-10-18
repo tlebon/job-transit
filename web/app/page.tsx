@@ -10,7 +10,7 @@ import { GOALS, GoalPicker } from "@/components/GoalPicker";
 import { AskBar } from "@/components/AskBar";
 import { ChatPanel, type Turn } from "@/components/ChatPanel";
 import { AboutData } from "@/components/AboutData";
-import { DEFAULT_SEARCH, loadLocation, loadSearch, placeName, saveSearch, SEARCH_EVENT, type Search } from "@/lib/location";
+import { COUNTRIES, DEFAULT_SEARCH, loadLocation, loadSearch, placeName, saveSearch, SEARCH_EVENT, type Search } from "@/lib/location";
 import { LocationEditor } from "@/components/LocationEditor";
 import { ChipGroups } from "@/components/ChipGroups";
 import { ExperiencePicker } from "@/components/ExperiencePicker";
@@ -247,7 +247,8 @@ export default function Home() {
 
   const onChatAction = (action: ChatAction, chatId: string) => {
     if (action.type === "set_location") {
-      setSearch({ places: action.places, remote: action.remote, confirmed: true });
+      const places = action.places.filter((p) => COUNTRIES.some(([c]) => c === p.country)); // never save a bad code
+      if (places.length) setSearch({ places, remote: action.remote, confirmed: true });
       return;
     }
     if (action.type === "save_plan") {
